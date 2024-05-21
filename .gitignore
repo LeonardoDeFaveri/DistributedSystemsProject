@@ -1,7 +1,8 @@
-.gradle/
-.idea/
-bin/
-build/
-gradle/
+.gradle/*
+.idea/*
+bin/*
+build/*
+gradle/*
 gradlew
 gradlew.bat
+.vscode/*
