@@ -25,7 +25,7 @@ public class Client extends AbstractActor {
         this.replicas = replicas;
         this.v = 0;
         this.favoriteReplica = -1;
-        this.numberGenerator = new Random();
+        this.numberGenerator = new Random(System.nanoTime());
     }
 
     public static Props props(ArrayList<ActorRef> replicas) {
@@ -51,6 +51,9 @@ public class Client extends AbstractActor {
                 new UpdateRequestMsg(this.numberGenerator.nextInt(MAX_INT)),
                 getContext().system().dispatcher(),
                 getSelf());
+        // this.replicas.get(numberGenerator.nextInt(replicas.size()))
+        // .tell(new UpdateRequestMsg(this.numberGenerator.nextInt(MAX_INT)),
+        // getSelf());
     }
 
     private ActorRef getReplica() {
