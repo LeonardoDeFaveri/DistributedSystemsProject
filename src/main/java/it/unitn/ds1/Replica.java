@@ -8,9 +8,9 @@ import java.util.List;
 import akka.actor.AbstractActor;
 import akka.actor.ActorRef;
 import akka.actor.Props;
-import it.unitn.ds1.Client.ReadMsg;
-import it.unitn.ds1.Client.ReadOkMsg;
-import it.unitn.ds1.Client.WriteMsg;
+import it.unitn.ds1.models.ReadMsg;
+import it.unitn.ds1.models.ReadOkMsg;
+import it.unitn.ds1.models.WriteMsg;
 
 public class Replica extends AbstractActor {
     private final List<ActorRef> replicas;
@@ -65,6 +65,17 @@ public class Replica extends AbstractActor {
 
     @Override
     public Receive createReceive() {
+        return receiveBuilder()
+            .match(JoinGroupMsg.class,  this::onJoinGroupMsg)
+            .match(WriteMsg.class, this::onWriteMsg)
+            .match(ReadMsg.class, this::onReadMsg)
+            .build();
+    }
+
+    /**
+     * Create a new coordinator replica, similar to the other replicas, but can handle updates
+     */
+    public Receive createCoordinator() {
         return receiveBuilder()
             .match(JoinGroupMsg.class,  this::onJoinGroupMsg)
             .match(WriteMsg.class, this::onWriteMsg)

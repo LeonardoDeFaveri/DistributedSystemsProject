@@ -1,6 +1,5 @@
 package it.unitn.ds1;
 
-import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Random;
 import java.util.concurrent.TimeUnit;
@@ -9,6 +8,9 @@ import akka.actor.AbstractActor;
 import akka.actor.ActorRef;
 import akka.actor.Cancellable;
 import akka.actor.Props;
+import it.unitn.ds1.models.ReadMsg;
+import it.unitn.ds1.models.ReadOkMsg;
+import it.unitn.ds1.models.WriteMsg;
 import scala.concurrent.duration.Duration;
 
 public class Client extends AbstractActor {
@@ -58,26 +60,6 @@ public class Client extends AbstractActor {
         }
 
         return this.replicas.get(this.favoriteReplica);
-    }
-
-    //--------------------------------------------------------------------------
-
-    public static class WriteMsg implements Serializable {
-        public final int v;
-
-        public WriteMsg(int v) {
-            this.v = v;
-        }
-    }
-
-    public static class ReadMsg implements Serializable {}
-
-    public static class ReadOkMsg implements Serializable {
-        public final int v;
-
-        public ReadOkMsg(int v) {
-            this.v = v;
-        }
     }
 
     //--------------------------------------------------------------------------
