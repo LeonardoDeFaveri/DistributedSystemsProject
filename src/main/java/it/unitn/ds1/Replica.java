@@ -1,22 +1,22 @@
 package it.unitn.ds1;
 
-import java.io.Serializable;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 
 import akka.actor.AbstractActor;
 import akka.actor.ActorRef;
 import akka.actor.Props;
+import it.unitn.ds1.models.JoinGroupMsg;
 import it.unitn.ds1.models.ReadMsg;
 import it.unitn.ds1.models.ReadOkMsg;
-import it.unitn.ds1.models.WriteMsg;
+import it.unitn.ds1.models.UpdateRequestMsg;
 
 public class Replica extends AbstractActor {
     private final List<ActorRef> replicas;
     private int coordinatorIndex;
     private boolean isCoordinator;
     private int v;
+    private int quorum = 0;
 
     public Replica(int v, int coordinatorIndex) {
         this.replicas = new ArrayList<>();
@@ -29,31 +29,30 @@ public class Replica extends AbstractActor {
         return Props.create(Replica.class, () -> new Replica(v, coordinatorIndex));
     }
 
-    //--------------------------------------------------------------------------
-    public static class JoinGroupMsg implements Serializable {
-        // List of all replicas in the system
-        public final List<ActorRef> replicas;
-
-        public JoinGroupMsg(ArrayList<ActorRef> group) {
-            this.replicas = Collections.unmodifiableList(new ArrayList<>(group));
-        }
-    }
-
-    //--------------------------------------------------------------------------
+    // --------------------------------------------------------------------------
 
     private void onJoinGroupMsg(JoinGroupMsg msg) {
         for (ActorRef replica : msg.replicas) {
             this.replicas.add(replica);
         }
+        this.quorum = (this.replicas.size() / 2) + 1;
 
         this.isCoordinator = this.replicas.indexOf(this.getSelf()) == this.coordinatorIndex;
         System.out.println();
     }
 
-    private void onWriteMsg(WriteMsg msg) {
-        // TODO: implement UPDATE protocol
+    private void onUpdateRequest(UpdateRequestMsg msg) {
+        // If the replica is not the coordinator
+        if (!this.isCoordinator) {
+            // Send the request to the coordinator
+            var coordinator = this.replicas.get(this.coordinatorIndex);
+            coordinator.tell(msg, this.self());
+            return;
+        }
 
-        System.out.println("Client " + getSender().path().name() + " wr9te req to " + this.getSelf().path().name() + " for " + msg.v);
+        // Implement the quorum protocol. The coordinator asks all the replicas if
+        System.out.println("Client " + getSender().path().name() + " wr9te req to " + this.getSelf().path().name()
+                + " for " + msg.v);
     }
 
     private void onReadMsg(ReadMsg msg) {
@@ -65,21 +64,24 @@ public class Replica extends AbstractActor {
 
     @Override
     public Receive createReceive() {
+        if (this.isCoordinator)
+            return createCoordinator();
         return receiveBuilder()
-            .match(JoinGroupMsg.class,  this::onJoinGroupMsg)
-            .match(WriteMsg.class, this::onWriteMsg)
-            .match(ReadMsg.class, this::onReadMsg)
-            .build();
+                .match(JoinGroupMsg.class, this::onJoinGroupMsg)
+                .match(UpdateRequestMsg.class, this::onUpdateRequest)
+                .match(ReadMsg.class, this::onReadMsg)
+                .build();
     }
 
     /**
-     * Create a new coordinator replica, similar to the other replicas, but can handle updates
+     * Create a new coordinator replica, similar to the other replicas, but can
+     * handle updates
      */
     public Receive createCoordinator() {
         return receiveBuilder()
-            .match(JoinGroupMsg.class,  this::onJoinGroupMsg)
-            .match(WriteMsg.class, this::onWriteMsg)
-            .match(ReadMsg.class, this::onReadMsg)
-            .build();
+                .match(JoinGroupMsg.class, this::onJoinGroupMsg)
+                .match(UpdateRequestMsg.class, this::onUpdateRequest)
+                .match(ReadMsg.class, this::onReadMsg)
+                .build();
     }
 }

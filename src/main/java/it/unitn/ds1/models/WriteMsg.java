@@ -3,7 +3,7 @@ package it.unitn.ds1.models;
 import java.io.Serializable;
 
 /**
- * Sent by the client to the replica, to update the value
+ * Sent by the
  */
 public class WriteMsg implements Serializable {
     public final int v;
