@@ -22,8 +22,8 @@ import it.unitn.ds1.models.WriteMsg;
 import it.unitn.ds1.models.WriteOkMsg;
 
 public class Replica extends AbstractActor {
-    private final List<ActorRef> replicas;
-    private int coordinatorIndex;
+    private final List<ActorRef> replicas; // List of all replicas in the system
+    private int coordinatorIndex; // Index of coordinator replica inside `replicas`
     private boolean isCoordinator;
 
     private int v; // The value of the replica
@@ -32,9 +32,11 @@ public class Replica extends AbstractActor {
     private int epoch; // The current epoch
     private int writeIndex; // The index of the last write operation
 
-    private final Map<Map.Entry<Integer, Integer>, Set<ActorRef>> writeAcksMap = new HashMap<>(); // The number of  write acks received for each write
+    // The number of  write acks received for each write
+    private final Map<Map.Entry<Integer, Integer>, Set<ActorRef>> writeAcksMap = new HashMap<>();
 
-    private final Map<Map.Entry<Integer, Integer>, Integer> writeRequests = new HashMap<>(); // The write requests the replica has received from the coordinator, the value is the new value to write
+    // The write requests the replica has received from the coordinator, the value is the new value to write
+    private final Map<Map.Entry<Integer, Integer>, Integer> writeRequests = new HashMap<>();
 
     private int currentWriteToAck = 0; // The write we are currently collecting ACKs for.
 
@@ -54,6 +56,10 @@ public class Replica extends AbstractActor {
         return Props.create(Replica.class, () -> new Replica(v, coordinatorIndex));
     }
 
+    /**
+     * Makes the process sleep for a random amount of time so as to simulate a
+     * delay.
+     */
     private void simulateDelay() {
         try { Thread.sleep(this.numberGenerator.nextInt(500, 2000)); }
         catch (InterruptedException e) { e.printStackTrace(); }
