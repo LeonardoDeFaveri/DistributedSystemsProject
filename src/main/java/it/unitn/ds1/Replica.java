@@ -35,6 +35,8 @@ public class Replica extends AbstractActor {
 
     private final Map<Map.Entry<Integer, Integer>, Integer> writeRequests = new HashMap<>(); // The write requests the replica has received from the coordinator, the value is the new value to write
 
+    private int currentWriteToAck = 0; // The write we are currently collecting ACKs for.
+
     public Replica(int v, int coordinatorIndex) {
         System.out.println("Replica created with value " + v);
         this.replicas = new ArrayList<>();
@@ -82,11 +84,12 @@ public class Replica extends AbstractActor {
         // Implement the quorum protocol. The coordinator asks all the replicas to
         // update
         multicast(new WriteMsg(msg.v, this.epoch, this.writeIndex));
-        this.writeIndex++;
 
         // Add the new write request to the map, so that the acks can be received
         var pair = new AbstractMap.SimpleEntry<>(this.epoch, this.writeIndex);
         this.writeAcksMap.putIfAbsent(pair, new HashSet<>());
+
+        this.writeIndex++;
 
         System.out.println("Client " + getSender().path().name() + " wr9te req to " + this.getSelf().path().name() + " for " + msg.v + " in epoch " + this.epoch + " with index " + this.writeIndex);
     }
@@ -108,16 +111,30 @@ public class Replica extends AbstractActor {
         // Add the sender to the list
         this.writeAcksMap.get(pair).add(getSender());
 
-        // If the quorum has been reached, remove the pair from the map and send the
-        // WriteOk message
-        // TODO: This should be FIFO. Add a variable (pair) with the index of the first write to serve.
-        // TODO: Also add a method that check which writes can be served.
-        if (this.writeAcksMap.get(pair).size() >= this.quorum) {
-            this.writeAcksMap.remove(pair);
-            multicast(new WriteOkMsg(msg.epoch, msg.writeIndex));
-        }
+        // Send all the messages that have been acked in FIFO order!
+        sendAllAckedMessages();
 
         System.out.println("Received ack from " + getSender().path().name() + " for " + msg.writeIndex + " in epoch " + msg.epoch);
+    }
+
+    /**
+     * The first message to be served is the `currentWriteToAck` index.
+     * When the message is sent to the replicas, serve all the successive messages
+     */
+    private void sendAllAckedMessages() {
+        // Starting from the first message to send, if the quorum has been reached, send the message
+        // Then, go to the next message (continue until the last write has been reached)
+        // If any of the writes didn't reach the quorum, stop!
+        while (this.currentWriteToAck < this.writeIndex) {
+            var pair = new AbstractMap.SimpleEntry<>(this.epoch, this.currentWriteToAck);
+            if (this.writeAcksMap.containsKey(pair) && this.writeAcksMap.get(pair).size() >= this.quorum) {
+                multicast(new WriteOkMsg(this.epoch, this.currentWriteToAck));
+                this.writeAcksMap.remove(pair);
+                this.currentWriteToAck++;
+            } else {
+                break;
+            }
+        }
     }
 
     /**
@@ -153,7 +170,7 @@ public class Replica extends AbstractActor {
         this.v = this.writeRequests.get(pair);
         this.writeRequests.remove(pair);
 
-        System.out.println("Applied the write " + msg.writeIndex + " in epoch " + msg.epoch + " with value " + this.v);
+        System.out.println("[" + this.self().path().name() + "]" + "Applied the write " + msg.writeIndex + " in epoch " + msg.epoch + " with value " + this.v);
     }
 
     /**
@@ -197,5 +214,7 @@ public class Replica extends AbstractActor {
     // TODO: implement behavior
     private void onCoordinatorChange() {
         this.epoch++;
+        this.writeIndex = 0;
+        this.currentWriteToAck = 0;
     }
 }
