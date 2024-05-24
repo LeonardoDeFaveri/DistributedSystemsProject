@@ -2,7 +2,6 @@ apply plugin: 'java'
 apply plugin: 'idea'
 apply plugin: 'application'
 
-
 repositories {
     mavenCentral()
     mavenLocal()
@@ -31,7 +30,13 @@ compileJava {
     options.compilerArgs += ["-Xlint:deprecation"]
 }
 
-mainClassName = "it.unitn.ds1.Broadcaster"
+
+// Old settings changed for deprecated warning
+// mainClassName = "it.unitn.ds1.Broadcaster"
+application {
+    mainClass = "it.unitn.ds1.Broadcaster"
+}
+ 
 
 run {
     standardInput = System.in
