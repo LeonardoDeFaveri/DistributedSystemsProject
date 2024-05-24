@@ -51,9 +51,6 @@ public class Client extends AbstractActor {
                 new UpdateRequestMsg(this.numberGenerator.nextInt(MAX_INT)),
                 getContext().system().dispatcher(),
                 getSelf());
-        // this.replicas.get(numberGenerator.nextInt(replicas.size()))
-        // .tell(new UpdateRequestMsg(this.numberGenerator.nextInt(MAX_INT)),
-        // getSelf());
     }
 
     private ActorRef getReplica() {
