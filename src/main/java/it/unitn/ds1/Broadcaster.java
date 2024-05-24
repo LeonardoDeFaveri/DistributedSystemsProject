@@ -1,10 +1,11 @@
 package it.unitn.ds1;
+
 import java.io.IOException;
 import java.util.ArrayList;
 
 import akka.actor.ActorRef;
 import akka.actor.ActorSystem;
-import it.unitn.ds1.Replica.JoinGroupMsg;
+import it.unitn.ds1.models.JoinGroupMsg;
 
 public class Broadcaster {
   final static int N_CLIENTS = 5;
@@ -32,9 +33,8 @@ public class Broadcaster {
     System.out.println(">>> Press ENTER to exit <<<");
     try {
       System.in.read();
-    }
-    catch (IOException ioe) {}
-    finally {
+    } catch (IOException ioe) {
+    } finally {
       system.terminate();
     }
   }

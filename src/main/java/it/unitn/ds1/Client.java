@@ -1,6 +1,5 @@
 package it.unitn.ds1;
 
-import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Random;
 import java.util.concurrent.TimeUnit;
@@ -9,6 +8,9 @@ import akka.actor.AbstractActor;
 import akka.actor.ActorRef;
 import akka.actor.Cancellable;
 import akka.actor.Props;
+import it.unitn.ds1.models.ReadMsg;
+import it.unitn.ds1.models.ReadOkMsg;
+import it.unitn.ds1.models.UpdateRequestMsg;
 import scala.concurrent.duration.Duration;
 
 public class Client extends AbstractActor {
@@ -23,7 +25,7 @@ public class Client extends AbstractActor {
         this.replicas = replicas;
         this.v = 0;
         this.favoriteReplica = -1;
-        this.numberGenerator = new Random();
+        this.numberGenerator = new Random(System.nanoTime());
     }
 
     public static Props props(ArrayList<ActorRef> replicas) {
@@ -34,22 +36,24 @@ public class Client extends AbstractActor {
     public void preStart() {
         // Create a timer that will periodically send a message to a replica
         Cancellable readTimer = getContext().system().scheduler().scheduleWithFixedDelay(
-            Duration.create(1, TimeUnit.SECONDS),   // when to start generating messages
-            Duration.create(1, TimeUnit.SECONDS),   // how frequently generate them
-            this.getReplica(),                      // destination actor reference
-            new ReadMsg(),                          // the message to send
-            getContext().system().dispatcher(),     // system dispatcher
-            getSelf()                               // source of the message (myself)
+                Duration.create(1, TimeUnit.SECONDS), // when to start generating messages
+                Duration.create(1, TimeUnit.SECONDS), // how frequently generate them
+                this.getReplica(), // destination actor reference
+                new ReadMsg(), // the message to send
+                getContext().system().dispatcher(), // system dispatcher
+                getSelf() // source of the message (myself)
         );
 
         Cancellable writeTimer = getContext().system().scheduler().scheduleWithFixedDelay(
-            Duration.create(1, TimeUnit.SECONDS),
-            Duration.create(1, TimeUnit.SECONDS),
-            this.getReplica(),
-            new WriteMsg(this.numberGenerator.nextInt(MAX_INT)),
-            getContext().system().dispatcher(),
-            getSelf()
-        );
+                Duration.create(1, TimeUnit.SECONDS),
+                Duration.create(1, TimeUnit.SECONDS),
+                this.getReplica(),
+                new UpdateRequestMsg(this.numberGenerator.nextInt(MAX_INT)),
+                getContext().system().dispatcher(),
+                getSelf());
+        // this.replicas.get(numberGenerator.nextInt(replicas.size()))
+        // .tell(new UpdateRequestMsg(this.numberGenerator.nextInt(MAX_INT)),
+        // getSelf());
     }
 
     private ActorRef getReplica() {
@@ -60,27 +64,7 @@ public class Client extends AbstractActor {
         return this.replicas.get(this.favoriteReplica);
     }
 
-    //--------------------------------------------------------------------------
-
-    public static class WriteMsg implements Serializable {
-        public final int v;
-
-        public WriteMsg(int v) {
-            this.v = v;
-        }
-    }
-
-    public static class ReadMsg implements Serializable {}
-
-    public static class ReadOkMsg implements Serializable {
-        public final int v;
-
-        public ReadOkMsg(int v) {
-            this.v = v;
-        }
-    }
-
-    //--------------------------------------------------------------------------
+    // --------------------------------------------------------------------------
 
     private void onReadOk(ReadOkMsg msg) {
         // Updates client value with the one read from a replica
@@ -91,8 +75,8 @@ public class Client extends AbstractActor {
     @Override
     public Receive createReceive() {
         return receiveBuilder()
-            .match(ReadOkMsg.class, this::onReadOk)
-            .build();
+                .match(ReadOkMsg.class, this::onReadOk)
+                .build();
     }
-    
+
 }
