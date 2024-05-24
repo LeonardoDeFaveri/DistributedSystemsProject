@@ -84,6 +84,10 @@ public class Replica extends AbstractActor {
         multicast(new WriteMsg(msg.v, this.epoch, this.writeIndex));
         this.writeIndex++;
 
+        // Add the new write request to the map, so that the acks can be received
+        var pair = new AbstractMap.SimpleEntry<>(this.epoch, this.writeIndex);
+        this.writeAcksMap.putIfAbsent(pair, new HashSet<>());
+
         System.out.println("Client " + getSender().path().name() + " wr9te req to " + this.getSelf().path().name() + " for " + msg.v + " in epoch " + this.epoch + " with index " + this.writeIndex);
     }
 
@@ -95,15 +99,19 @@ public class Replica extends AbstractActor {
         if (msg.epoch != this.epoch)
             return;
 
-        // If the pair epoch-index is not in the map, add the list
         var pair = new AbstractMap.SimpleEntry<>(msg.epoch, msg.writeIndex);
-        this.writeAcksMap.putIfAbsent(pair, new HashSet<>());
+
+        // The OK has already been sent, as the quorum was reached. Ignore the message from other replicas
+        if (!this.writeAcksMap.containsKey(pair))
+            return;
 
         // Add the sender to the list
         this.writeAcksMap.get(pair).add(getSender());
 
         // If the quorum has been reached, remove the pair from the map and send the
         // WriteOk message
+        // TODO: This should be FIFO. Add a variable (pair) with the index of the first write to serve.
+        // TODO: Also add a method that check which writes can be served.
         if (this.writeAcksMap.get(pair).size() >= this.quorum) {
             this.writeAcksMap.remove(pair);
             multicast(new WriteOkMsg(msg.epoch, msg.writeIndex));
@@ -184,5 +192,10 @@ public class Replica extends AbstractActor {
                 .match(WriteMsg.class, this::onWriteMsg)
                 .match(WriteOkMsg.class, this::onWriteOkMsg)
                 .build();
+    }
+
+    // TODO: implement behavior
+    private void onCoordinatorChange() {
+        this.epoch++;
     }
 }
