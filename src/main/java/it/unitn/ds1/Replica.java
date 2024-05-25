@@ -43,7 +43,7 @@ public class Replica extends AbstractActor {
     private Random numberGenerator;
 
     public Replica(int v, int coordinatorIndex) {
-        System.out.println("Replica created with value " + v);
+        System.out.printf("[R] Replica %s created with value %d\n", getSelf().path().name(), v);
         this.replicas = new ArrayList<>();
         this.coordinatorIndex = coordinatorIndex;
         this.isCoordinator = false;
@@ -61,7 +61,7 @@ public class Replica extends AbstractActor {
      * delay.
      */
     private void simulateDelay() {
-        try { Thread.sleep(this.numberGenerator.nextInt(500, 2000)); }
+        try { Thread.sleep(this.numberGenerator.nextInt(100)); }
         catch (InterruptedException e) { e.printStackTrace(); }
     }
 
@@ -74,7 +74,9 @@ public class Replica extends AbstractActor {
         this.quorum = (this.replicas.size() / 2) + 1;
 
         this.isCoordinator = this.replicas.indexOf(this.getSelf()) == this.coordinatorIndex;
-        System.out.println();
+        if (this.isCoordinator) {
+            //getContext().become(createCoordinator());
+        }
     }
 
     private void multicast(Serializable msg) {
@@ -103,11 +105,17 @@ public class Replica extends AbstractActor {
         var pair = new AbstractMap.SimpleEntry<>(this.epoch, this.writeIndex);
         this.writeAcksMap.putIfAbsent(pair, new HashSet<>());
 
+        System.out.printf(
+            "[C] Client %s write req to %s for %d in epoch %d with index %d\n",
+            getSender().path().name(),
+            getSelf().path().name(),
+            msg.v,
+            this.epoch,
+            this.writeIndex
+        );
         this.writeIndex++;
-
-        System.out.println("Client " + getSender().path().name() + " write req to " + this.getSelf().path().name() + " for " + msg.v + " in epoch " + this.epoch + " with index " + this.writeIndex);
     }
-
+    
     private void onWriteAckMsg(WriteAckMsg msg) {
         if (!this.isCoordinator)
             return;
@@ -128,7 +136,12 @@ public class Replica extends AbstractActor {
         // Send all the messages that have been acked in FIFO order!
         sendAllAckedMessages();
 
-        System.out.println("Received ack from " + getSender().path().name() + " for " + msg.writeIndex + " in epoch " + msg.epoch);
+        System.out.printf(
+            "[Co] Received ack from %s for %d in epoch %d\n",
+            getSender().path().name(),
+            msg.writeIndex,
+            msg.epoch
+        );
     }
 
     /**
@@ -162,8 +175,12 @@ public class Replica extends AbstractActor {
         this.simulateDelay();
         getSender().tell(new WriteAckMsg(msg.epoch, msg.writeIndex), this.self());
 
-        System.out.println("Write requested by the coordinator " + getSender().path().name() + " to "
-                + this.getSelf().path().name() + " for " + msg.v);
+        System.out.printf(
+            "[R] Write requested by the coordinator %s to %s for %d\n",
+            getSender().path().name(),
+            this.getSelf().path().name(),
+            msg.v
+        );
     }
 
     /**
@@ -184,7 +201,13 @@ public class Replica extends AbstractActor {
         this.v = this.writeRequests.get(pair);
         this.writeRequests.remove(pair);
 
-        System.out.println("[" + this.self().path().name() + "]" + "Applied the write " + msg.writeIndex + " in epoch " + msg.epoch + " with value " + this.v);
+        System.out.printf(
+            "[R] [%s] Applied the write %d in epoch %d with value %d\n",
+            this.self().path().name(),
+            msg.writeIndex,
+            msg.epoch,
+            this.v
+        );
     }
 
     /**
@@ -195,7 +218,11 @@ public class Replica extends AbstractActor {
         this.simulateDelay();
         sender.tell(new ReadOkMsg(this.v), this.self());
 
-        System.out.println("Client " + getSender().path().name() + " read req to " + this.getSelf().path().name());
+        System.out.printf(
+            "[C] Client %s read req to %s\n",
+            getSender().path().name(),
+            this.getSelf().path().name()
+        );
     }
 
     @Override
@@ -205,7 +232,7 @@ public class Replica extends AbstractActor {
                 .match(ReadMsg.class, this::onReadMsg)
                 .match(UpdateRequestMsg.class, this::onUpdateRequest)
                 // There's no need for a replica to handle WriteAckMsg
-                // .match(WriteAckMsg.class, this::onWriteAckMsg)
+                .match(WriteAckMsg.class, this::onWriteAckMsg)
                 .match(WriteMsg.class, this::onWriteMsg)
                 .match(WriteOkMsg.class, this::onWriteOkMsg)
                 .build();
@@ -214,9 +241,8 @@ public class Replica extends AbstractActor {
     /**
      * Create a new coordinator replica, similar to the other replicas, but can
      * handle updates
-     * [This seems to be useless for now]
      */
-    public Receive createCoordinator() {
+    public AbstractActor.Receive createCoordinator() {
         return receiveBuilder()
                 .match(JoinGroupMsg.class, this::onJoinGroupMsg)
                 .match(ReadMsg.class, this::onReadMsg)
@@ -228,7 +254,7 @@ public class Replica extends AbstractActor {
     }
 
     // Creates a crashed replica that doesn't handle any more message.
-    final Receive createCrashed() {
+    final AbstractActor.Receive createCrashed() {
         return receiveBuilder()
                 .build();
     }

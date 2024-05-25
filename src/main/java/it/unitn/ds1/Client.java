@@ -10,6 +10,7 @@ import akka.actor.Cancellable;
 import akka.actor.Props;
 import it.unitn.ds1.models.ReadMsg;
 import it.unitn.ds1.models.ReadOkMsg;
+import it.unitn.ds1.models.StartMsg;
 import it.unitn.ds1.models.UpdateRequestMsg;
 import scala.concurrent.duration.Duration;
 
@@ -22,7 +23,11 @@ public class Client extends AbstractActor {
     private int favoriteReplica;
     private Random numberGenerator;
 
+    private Cancellable readTimer;
+    private Cancellable writeTimer;
+
     public Client(ArrayList<ActorRef> replicas) {
+        System.out.printf("[C] Client %s created\n", getSelf().path().name());
         this.replicas = replicas;
         this.v = 0;
         this.favoriteReplica = -1;
@@ -31,28 +36,6 @@ public class Client extends AbstractActor {
 
     public static Props props(ArrayList<ActorRef> replicas) {
         return Props.create(Client.class, () -> new Client(replicas));
-    }
-
-    @Override
-    public void preStart() {
-        // Create a timer that will periodically send READ messages to a replica
-        Cancellable readTimer = getContext().system().scheduler().scheduleWithFixedDelay(
-                Duration.create(1, TimeUnit.SECONDS), // when to start generating messages
-                Duration.create(1, TimeUnit.SECONDS), // how frequently generate them
-                this.getReplica(), // destination actor reference
-                new ReadMsg(), // the message to send
-                getContext().system().dispatcher(), // system dispatcher
-                getSelf() // source of the message (myself)
-        );
-
-        // Create a timer that will periodically send WRITE messages to a replica
-        Cancellable writeTimer = getContext().system().scheduler().scheduleWithFixedDelay(
-                Duration.create(1, TimeUnit.SECONDS),
-                Duration.create(1, TimeUnit.SECONDS),
-                this.getReplica(),
-                new UpdateRequestMsg(this.numberGenerator.nextInt(MAX_INT)),
-                getContext().system().dispatcher(),
-                getSelf());
     }
 
     /**
@@ -65,20 +48,53 @@ public class Client extends AbstractActor {
             this.favoriteReplica = this.numberGenerator.nextInt(this.replicas.size());
         }
 
+        System.out.printf(
+            "[C] Client %s choosed replica %s as favourite\n",
+            getSelf().path().name(),
+            this.replicas.get(this.favoriteReplica).path().name()
+        );
         return this.replicas.get(this.favoriteReplica);
     }
 
     // --------------------------------------------------------------------------
 
+    private void onStartMsg(StartMsg msg) {
+        System.out.printf("[C] Client %s started\n", getSelf().path().name());
+
+        // Create a timer that will periodically send READ messages to a replica
+        this.readTimer = getContext().system().scheduler().scheduleWithFixedDelay(
+                Duration.create(1, TimeUnit.SECONDS), // when to start generating messages
+                Duration.create(3, TimeUnit.SECONDS), // how frequently generate them
+                this.getReplica(), // destination actor reference
+                new ReadMsg(), // the message to send
+                getContext().system().dispatcher(), // system dispatcher
+                getSelf() // source of the message (myself)
+        );
+
+        // Create a timer that will periodically send WRITE messages to a replica
+        this.writeTimer = getContext().system().scheduler().scheduleWithFixedDelay(
+                Duration.create(1, TimeUnit.SECONDS),
+                Duration.create(1, TimeUnit.SECONDS),
+                this.getReplica(),
+                new UpdateRequestMsg(this.numberGenerator.nextInt(MAX_INT)),
+                getContext().system().dispatcher(),
+                getSelf());
+    }
+
     private void onReadOk(ReadOkMsg msg) {
         // Updates client value with the one read from a replica
         this.v = msg.v;
-        System.out.println("Client " + getSelf().path().name() + " read done " + v);
+        System.out.printf(
+            "[C] Client %s read done %d\n",
+            getSelf().path().name(),
+           this. v
+        );
     }
 
     @Override
     public Receive createReceive() {
         return receiveBuilder()
+                .match(StartMsg.class, this::onStartMsg)
                 .match(ReadOkMsg.class, this::onReadOk)
                 .build();
     }
