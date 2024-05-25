@@ -288,6 +288,7 @@ public class Replica extends AbstractActor {
 
     /**
      * Send an election message to the next node
+     * TODO: should the last write index based on the updates applied?
      */
     public void sendElectionMessage() {
         var nextNode = this.getNextNode();
@@ -359,14 +360,7 @@ public class Replica extends AbstractActor {
         getNextNode().tell(msg, getSelf()); // Forward the message to the next node
     }
 
-    public static class SetManuallyMsg implements Serializable {
-        public final int epoch;
-        public final int writeIndex;
-
-        public SetManuallyMsg(int epoch, int writeIndex) {
-            this.epoch = epoch;
-            this.writeIndex = writeIndex;
-        }
+    public record SetManuallyMsg(int epoch, int writeIndex) implements Serializable {
     }
 
     public void manualChangeMsg(SetManuallyMsg msg) {
