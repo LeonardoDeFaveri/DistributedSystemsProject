@@ -14,10 +14,11 @@ import it.unitn.ds1.models.UpdateRequestMsg;
 import scala.concurrent.duration.Duration;
 
 public class Client extends AbstractActor {
+    // Maximun value to be generated for update messages
     static final int MAX_INT = 1000;
 
-    private final ArrayList<ActorRef> replicas;
-    private int v;
+    private final ArrayList<ActorRef> replicas; // All replicas in the system
+    private int v; // Last read value
     private int favoriteReplica;
     private Random numberGenerator;
 
@@ -34,7 +35,7 @@ public class Client extends AbstractActor {
 
     @Override
     public void preStart() {
-        // Create a timer that will periodically send a message to a replica
+        // Create a timer that will periodically send READ messages to a replica
         Cancellable readTimer = getContext().system().scheduler().scheduleWithFixedDelay(
                 Duration.create(1, TimeUnit.SECONDS), // when to start generating messages
                 Duration.create(1, TimeUnit.SECONDS), // how frequently generate them
@@ -44,6 +45,7 @@ public class Client extends AbstractActor {
                 getSelf() // source of the message (myself)
         );
 
+        // Create a timer that will periodically send WRITE messages to a replica
         Cancellable writeTimer = getContext().system().scheduler().scheduleWithFixedDelay(
                 Duration.create(1, TimeUnit.SECONDS),
                 Duration.create(1, TimeUnit.SECONDS),
@@ -51,11 +53,13 @@ public class Client extends AbstractActor {
                 new UpdateRequestMsg(this.numberGenerator.nextInt(MAX_INT)),
                 getContext().system().dispatcher(),
                 getSelf());
-        // this.replicas.get(numberGenerator.nextInt(replicas.size()))
-        // .tell(new UpdateRequestMsg(this.numberGenerator.nextInt(MAX_INT)),
-        // getSelf());
     }
 
+    /**
+     * Return the replica to be contacted. If favourite replica is available, it
+     * is returned, otherwise another random one is choosen and set as favourite.
+     * @return replica to be contacted
+     */
     private ActorRef getReplica() {
         if (this.favoriteReplica < 0) {
             this.favoriteReplica = this.numberGenerator.nextInt(this.replicas.size());
