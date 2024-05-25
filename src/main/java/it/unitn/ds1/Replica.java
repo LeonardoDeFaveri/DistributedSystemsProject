@@ -61,6 +61,8 @@ public class Replica extends AbstractActor {
      * delay.
      */
     private void simulateDelay() {
+        // The choice of the delay is highly relevant, to big delays slows down
+        // too much the update protocol
         try { Thread.sleep(this.numberGenerator.nextInt(100)); }
         catch (InterruptedException e) { e.printStackTrace(); }
     }
@@ -75,7 +77,7 @@ public class Replica extends AbstractActor {
 
         this.isCoordinator = this.replicas.indexOf(this.getSelf()) == this.coordinatorIndex;
         if (this.isCoordinator) {
-            //getContext().become(createCoordinator());
+            getContext().become(createCoordinator());
         }
     }
 
@@ -232,7 +234,7 @@ public class Replica extends AbstractActor {
                 .match(ReadMsg.class, this::onReadMsg)
                 .match(UpdateRequestMsg.class, this::onUpdateRequest)
                 // There's no need for a replica to handle WriteAckMsg
-                .match(WriteAckMsg.class, this::onWriteAckMsg)
+                //.match(WriteAckMsg.class, this::onWriteAckMsg)
                 .match(WriteMsg.class, this::onWriteMsg)
                 .match(WriteOkMsg.class, this::onWriteOkMsg)
                 .build();

@@ -11,6 +11,7 @@ import akka.actor.Props;
 import it.unitn.ds1.models.ReadMsg;
 import it.unitn.ds1.models.ReadOkMsg;
 import it.unitn.ds1.models.StartMsg;
+import it.unitn.ds1.models.StopMsg;
 import it.unitn.ds1.models.UpdateRequestMsg;
 import scala.concurrent.duration.Duration;
 
@@ -80,6 +81,18 @@ public class Client extends AbstractActor {
                 getContext().system().dispatcher(),
                 getSelf());
     }
+    
+    private void onStopMsg(StopMsg msg) {
+        if (this.readTimer != null) {
+            this.readTimer.cancel();
+            this.readTimer = null;
+        }
+
+        if (this.writeTimer != null) {
+            this.writeTimer.cancel();
+            this.writeTimer = null;
+        }
+    }
 
     private void onReadOk(ReadOkMsg msg) {
         // Updates client value with the one read from a replica
@@ -95,6 +108,7 @@ public class Client extends AbstractActor {
     public Receive createReceive() {
         return receiveBuilder()
                 .match(StartMsg.class, this::onStartMsg)
+                .match(StopMsg.class, this::onStopMsg)
                 .match(ReadOkMsg.class, this::onReadOk)
                 .build();
     }
