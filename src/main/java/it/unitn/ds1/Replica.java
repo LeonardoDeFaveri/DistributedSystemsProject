@@ -13,6 +13,9 @@ import java.util.Set;
 import akka.actor.AbstractActor;
 import akka.actor.ActorRef;
 import akka.actor.Props;
+import it.unitn.ds1.models.CrashMsg;
+import it.unitn.ds1.models.CrashResponseMsg;
+import it.unitn.ds1.models.HeartbeatMsg;
 import it.unitn.ds1.models.JoinGroupMsg;
 import it.unitn.ds1.models.ReadMsg;
 import it.unitn.ds1.models.ReadOkMsg;
@@ -22,7 +25,10 @@ import it.unitn.ds1.models.WriteMsg;
 import it.unitn.ds1.models.WriteOkMsg;
 
 public class Replica extends AbstractActor {
+    static final int CRASH_CHANCES = 100;
+
     private final List<ActorRef> replicas; // List of all replicas in the system
+    private final Set<ActorRef> crashedReplicas; // Set of crashed replicas
     private int coordinatorIndex; // Index of coordinator replica inside `replicas`
     private boolean isCoordinator;
 
@@ -40,16 +46,17 @@ public class Replica extends AbstractActor {
 
     private int currentWriteToAck = 0; // The write we are currently collecting ACKs for.
 
-    private Random numberGenerator;
+    private Random numberGenerator; // Generator for delays
 
     public Replica(int v, int coordinatorIndex) {
-        System.out.printf("[R] Replica %s created with value %d\n", getSelf().path().name(), v);
         this.replicas = new ArrayList<>();
+        this.crashedReplicas = new HashSet<>();
         this.coordinatorIndex = coordinatorIndex;
         this.isCoordinator = false;
         this.v = v;
 
         this.numberGenerator = new Random(System.nanoTime());
+        System.out.printf("[R] Replica %s created with value %d\n", getSelf().path().name(), v);
     }
 
     public static Props props(int v, int coordinatorIndex) {
@@ -227,16 +234,43 @@ public class Replica extends AbstractActor {
         );
     }
 
+    private void onHeartbeatMsg(HeartbeatMsg msg) {
+
+    }
+
+    private void onCrashMsg(CrashMsg msg) {
+        int chance = this.numberGenerator.nextInt(CRASH_CHANCES);
+
+        // Each replica has a 10% chance of crashing
+        if (chance >= 10) {
+            getSender().tell(new CrashResponseMsg(false), getSelf());
+
+            System.out.printf(
+                "[R] Replica %s received crash message and DIDN'T CRASH\n",
+                getSelf().path().name()
+            );
+        } else {
+            getSender().tell(new CrashResponseMsg(true), getSelf());
+            // The replica has crashed and will no more responde to messages
+            getContext().become(createCrashed());
+
+            System.out.printf(
+                "[R] Replica %s received crash message and CRASHED\n",
+                getSelf().path().name()
+            );
+        }
+    }
+
     @Override
     public Receive createReceive() {
         return receiveBuilder()
                 .match(JoinGroupMsg.class, this::onJoinGroupMsg)
                 .match(ReadMsg.class, this::onReadMsg)
                 .match(UpdateRequestMsg.class, this::onUpdateRequest)
-                // There's no need for a replica to handle WriteAckMsg
-                //.match(WriteAckMsg.class, this::onWriteAckMsg)
                 .match(WriteMsg.class, this::onWriteMsg)
                 .match(WriteOkMsg.class, this::onWriteOkMsg)
+                .match(HeartbeatMsg.class, this::onHeartbeatMsg)
+                .match(CrashMsg.class, this::onCrashMsg)
                 .build();
     }
 
@@ -252,6 +286,7 @@ public class Replica extends AbstractActor {
                 .match(WriteAckMsg.class, this::onWriteAckMsg)
                 .match(WriteMsg.class, this::onWriteMsg)
                 .match(WriteOkMsg.class, this::onWriteOkMsg)
+                .match(CrashMsg.class, this::onCrashMsg)
                 .build();
     }
 

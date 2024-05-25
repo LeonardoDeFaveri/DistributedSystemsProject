@@ -33,13 +33,17 @@ public class Broadcaster {
       clients.add(system.actorOf(Client.props(replicas), "client" + i));
     }
 
+    // Creates the actor that will periodically make replicas crash
+    ActorRef crashManager = system.actorOf(CrashManager.props(replicas), "crash_manager");
+
     System.out.print(">>> System ready");
-    requestContinue(system, "send start signal to clients");
+    requestContinue(system, "send start signal to clients and crash manager");
 
     // Send StartMsg to clients so that they begin producing requests
     for (ActorRef client : clients) {
       client.tell(new StartMsg(), ActorRef.noSender());
     }
+    crashManager.tell(new StartMsg(), ActorRef.noSender());
 
     System.out.print(">>> System working");
     requestContinue(system, "send stop signal to clients");

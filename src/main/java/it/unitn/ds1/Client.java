@@ -28,11 +28,12 @@ public class Client extends AbstractActor {
     private Cancellable writeTimer;
 
     public Client(ArrayList<ActorRef> replicas) {
-        System.out.printf("[C] Client %s created\n", getSelf().path().name());
         this.replicas = replicas;
         this.v = 0;
         this.favoriteReplica = -1;
         this.numberGenerator = new Random(System.nanoTime());
+
+        System.out.printf("[C] Client %s created\n", getSelf().path().name());
     }
 
     public static Props props(ArrayList<ActorRef> replicas) {
