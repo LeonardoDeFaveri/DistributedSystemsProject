@@ -10,7 +10,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 
 public class Broadcaster {
-    final static int N_CLIENTS = 5;
+    final static int N_CLIENTS = 3;
     final static int N_REPLICAS = 5;
 
     public static void main(String[] args) {

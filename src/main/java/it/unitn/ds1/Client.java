@@ -66,7 +66,7 @@ public class Client extends AbstractActor {
         // Create a timer that will periodically send READ messages to a replica
         this.readTimer = getContext().system().scheduler().scheduleWithFixedDelay(
                 Duration.create(1, TimeUnit.SECONDS), // when to start generating messages
-                Duration.create(3, TimeUnit.SECONDS), // how frequently generate them
+                Duration.create(10, TimeUnit.SECONDS), // how frequently generate them
                 this.getReplica(), // destination actor reference
                 new ReadMsg(), // the message to send
                 getContext().system().dispatcher(), // system dispatcher
@@ -76,7 +76,7 @@ public class Client extends AbstractActor {
         // Create a timer that will periodically send WRITE messages to a replica
         this.writeTimer = getContext().system().scheduler().scheduleWithFixedDelay(
                 Duration.create(1, TimeUnit.SECONDS),
-                Duration.create(1, TimeUnit.SECONDS),
+                Duration.create(4, TimeUnit.SECONDS),
                 this.getReplica(),
                 new UpdateRequestMsg(this.numberGenerator.nextInt(MAX_INT)),
                 getContext().system().dispatcher(),
