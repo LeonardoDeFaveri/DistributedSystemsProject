@@ -41,8 +41,8 @@ public class Client extends AbstractActor {
     }
 
     /**
-     * Return the replica to be contacted. If favourite replica is available, it
-     * is returned, otherwise another random one is chosen and set as favourite.
+     * Return the replica to be contacted. If favorite replica is available, it
+     * is returned, otherwise another random one is chosen and set as favorite.
      * @return replica to be contacted
      */
     private ActorRef getReplica() {
@@ -51,7 +51,7 @@ public class Client extends AbstractActor {
         }
 
         System.out.printf(
-            "[C] Client %s chose replica %s as favourite\n",
+            "[C] Client %s chose replica %s as favorite\n",
             getSelf().path().name(),
             this.replicas.get(this.favoriteReplica).path().name()
         );
@@ -84,6 +84,7 @@ public class Client extends AbstractActor {
     }
     
     private void onStopMsg(StopMsg msg) {
+        System.out.printf("[C] Client %s stopped\n", getSelf().path().name());
         if (this.readTimer != null) {
             this.readTimer.cancel();
             this.readTimer = null;
