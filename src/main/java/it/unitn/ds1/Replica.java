@@ -29,7 +29,7 @@ public class Replica extends AbstractActor {
 
     private final List<ActorRef> replicas; // List of all replicas in the system
     private final Set<ActorRef> crashedReplicas; // Set of crashed replicas
-    private int coordinatorIndex; // Index of coordinator replica inside `replicas`
+    private int coordinatorIndex; // Index of the coordinator replica inside `replicas`
     private boolean isCoordinator;
 
     private int v; // The value of the replica
@@ -46,7 +46,7 @@ public class Replica extends AbstractActor {
 
     private int currentWriteToAck = 0; // The write we are currently collecting ACKs for.
 
-    private Random numberGenerator; // Generator for delays
+    private final Random numberGenerator; // Generator for delays
 
     public Replica(int v, int coordinatorIndex) {
         this.replicas = new ArrayList<>();
@@ -64,7 +64,7 @@ public class Replica extends AbstractActor {
     }
 
     /**
-     * Makes the process sleep for a random amount of time so as to simulate a
+     * Makes the process sleep for a random amount of time to simulate a
      * delay.
      */
     private void simulateDelay() {
@@ -77,9 +77,7 @@ public class Replica extends AbstractActor {
     // -------------------------------------------------------------------------
 
     private void onJoinGroupMsg(JoinGroupMsg msg) {
-        for (ActorRef replica : msg.replicas) {
-            this.replicas.add(replica);
-        }
+        this.replicas.addAll(msg.replicas);
         this.quorum = (this.replicas.size() / 2) + 1;
 
         this.isCoordinator = this.replicas.indexOf(this.getSelf()) == this.coordinatorIndex;
@@ -251,7 +249,7 @@ public class Replica extends AbstractActor {
             );
         } else {
             getSender().tell(new CrashResponseMsg(true), getSelf());
-            // The replica has crashed and will no more responde to messages
+            // The replica has crashed and will not respond to messages anymore
             getContext().become(createCrashed());
 
             System.out.printf(

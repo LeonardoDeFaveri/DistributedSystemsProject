@@ -1,7 +1,6 @@
 package it.unitn.ds1;
 
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Random;
 import java.util.concurrent.TimeUnit;
@@ -20,7 +19,7 @@ public class CrashManager extends AbstractActor {
     private final int quorum;
 
     private Cancellable crashTimer;
-    private Random numberGenerator;
+    private final Random numberGenerator;
 
     public CrashManager(List<ActorRef> replicas) {
         this.replicas = new ArrayList<>();

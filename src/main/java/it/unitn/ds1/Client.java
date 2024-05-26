@@ -16,13 +16,13 @@ import it.unitn.ds1.models.UpdateRequestMsg;
 import scala.concurrent.duration.Duration;
 
 public class Client extends AbstractActor {
-    // Maximun value to be generated for update messages
+    // Maximum value to be generated for update messages
     static final int MAX_INT = 1000;
 
     private final ArrayList<ActorRef> replicas; // All replicas in the system
     private int v; // Last read value
     private int favoriteReplica;
-    private Random numberGenerator;
+    private final Random numberGenerator;
 
     private Cancellable readTimer;
     private Cancellable writeTimer;
@@ -42,7 +42,7 @@ public class Client extends AbstractActor {
 
     /**
      * Return the replica to be contacted. If favourite replica is available, it
-     * is returned, otherwise another random one is choosen and set as favourite.
+     * is returned, otherwise another random one is chosen and set as favourite.
      * @return replica to be contacted
      */
     private ActorRef getReplica() {
@@ -51,7 +51,7 @@ public class Client extends AbstractActor {
         }
 
         System.out.printf(
-            "[C] Client %s choosed replica %s as favourite\n",
+            "[C] Client %s chose replica %s as favourite\n",
             getSelf().path().name(),
             this.replicas.get(this.favoriteReplica).path().name()
         );
