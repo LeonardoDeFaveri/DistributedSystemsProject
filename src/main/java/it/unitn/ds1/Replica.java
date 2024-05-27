@@ -38,6 +38,9 @@ public class Replica extends AbstractActor {
     private int epoch; // The current epoch
     private int writeIndex; // The index of the last write operation
 
+    // The last write operation, to prevent an old write to be applied after a new one
+    private WriteMsg lastWrite = new WriteMsg(0, -1, -1);
+
     // The number of  write acks received for each write
     private final Map<Map.Entry<Integer, Integer>, Set<ActorRef>> writeAcksMap = new HashMap<>();
 
@@ -204,9 +207,16 @@ public class Replica extends AbstractActor {
         if (!this.writeRequests.containsKey(pair))
             return;
 
+        // If the last write applied is newer than the current write, ignore the message
+        if (this.lastWrite.epoch > msg.epoch || (this.lastWrite.epoch == msg.epoch && this.lastWrite.writeIndex > msg.writeIndex))
+            return;
+
         // Apply the write
         this.v = this.writeRequests.get(pair);
         this.writeRequests.remove(pair);
+
+        // Update the last write
+        this.lastWrite = new WriteMsg(this.v, msg.epoch, msg.writeIndex);
 
         System.out.printf(
             "[R] [%s] Applied the write %d in epoch %d with value %d\n",
