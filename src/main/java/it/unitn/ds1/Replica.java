@@ -13,6 +13,9 @@ import java.util.Set;
 import akka.actor.AbstractActor;
 import akka.actor.ActorRef;
 import akka.actor.Props;
+import it.unitn.ds1.models.CrashMsg;
+import it.unitn.ds1.models.CrashResponseMsg;
+import it.unitn.ds1.models.HeartbeatMsg;
 import it.unitn.ds1.models.JoinGroupMsg;
 import it.unitn.ds1.models.ReadMsg;
 import it.unitn.ds1.models.ReadOkMsg;
@@ -22,8 +25,11 @@ import it.unitn.ds1.models.WriteMsg;
 import it.unitn.ds1.models.WriteOkMsg;
 
 public class Replica extends AbstractActor {
+    static final int CRASH_CHANCES = 100;
+
     private final List<ActorRef> replicas; // List of all replicas in the system
-    private int coordinatorIndex; // Index of coordinator replica inside `replicas`
+    private final Set<ActorRef> crashedReplicas; // Set of crashed replicas
+    private int coordinatorIndex; // Index of the coordinator replica inside `replicas`
     private boolean isCoordinator;
 
     private int v; // The value of the replica
@@ -32,24 +38,30 @@ public class Replica extends AbstractActor {
     private int epoch; // The current epoch
     private int writeIndex; // The index of the last write operation
 
+    // The last write operation, to prevent an old write to be applied after a new one
+    private WriteMsg lastWrite = new WriteMsg(0, -1, -1);
+
     // The number of  write acks received for each write
-    private final Map<Map.Entry<Integer, Integer>, Set<ActorRef>> writeAcksMap = new HashMap<>();
+    private final Map<Map.Entry<Integer, Integer>, Set<ActorRef>> writeAcksMap;
 
     // The write requests the replica has received from the coordinator, the value is the new value to write
-    private final Map<Map.Entry<Integer, Integer>, Integer> writeRequests = new HashMap<>();
+    private final Map<Map.Entry<Integer, Integer>, Integer> writeRequests;
 
     private int currentWriteToAck = 0; // The write we are currently collecting ACKs for.
 
-    private Random numberGenerator;
+    private final Random numberGenerator; // Generator for delays
 
     public Replica(int v, int coordinatorIndex) {
-        System.out.println("Replica created with value " + v);
         this.replicas = new ArrayList<>();
+        this.crashedReplicas = new HashSet<>();
         this.coordinatorIndex = coordinatorIndex;
         this.isCoordinator = false;
         this.v = v;
+        this.writeAcksMap = new HashMap<>();
+        this.writeRequests = new HashMap<>();
 
         this.numberGenerator = new Random(System.nanoTime());
+        System.out.printf("[R] Replica %s created with value %d\n", getSelf().path().name(), v);
     }
 
     public static Props props(int v, int coordinatorIndex) {
@@ -57,24 +69,26 @@ public class Replica extends AbstractActor {
     }
 
     /**
-     * Makes the process sleep for a random amount of time so as to simulate a
+     * Makes the process sleep for a random amount of time to simulate a
      * delay.
      */
     private void simulateDelay() {
-        try { Thread.sleep(this.numberGenerator.nextInt(500, 2000)); }
+        // The choice of the delay is highly relevant, to big delays slows down
+        // too much the update protocol
+        try { Thread.sleep(this.numberGenerator.nextInt(100)); }
         catch (InterruptedException e) { e.printStackTrace(); }
     }
 
     // -------------------------------------------------------------------------
 
     private void onJoinGroupMsg(JoinGroupMsg msg) {
-        for (ActorRef replica : msg.replicas) {
-            this.replicas.add(replica);
-        }
+        this.replicas.addAll(msg.replicas);
         this.quorum = (this.replicas.size() / 2) + 1;
 
         this.isCoordinator = this.replicas.indexOf(this.getSelf()) == this.coordinatorIndex;
-        System.out.println();
+        if (this.isCoordinator) {
+            getContext().become(createCoordinator());
+        }
     }
 
     private void multicast(Serializable msg) {
@@ -103,11 +117,17 @@ public class Replica extends AbstractActor {
         var pair = new AbstractMap.SimpleEntry<>(this.epoch, this.writeIndex);
         this.writeAcksMap.putIfAbsent(pair, new HashSet<>());
 
+        System.out.printf(
+            "[C] Client %s write req to %s for %d in epoch %d with index %d\n",
+            getSender().path().name(),
+            getSelf().path().name(),
+            msg.v,
+            this.epoch,
+            this.writeIndex
+        );
         this.writeIndex++;
-
-        System.out.println("Client " + getSender().path().name() + " write req to " + this.getSelf().path().name() + " for " + msg.v + " in epoch " + this.epoch + " with index " + this.writeIndex);
     }
-
+    
     private void onWriteAckMsg(WriteAckMsg msg) {
         if (!this.isCoordinator)
             return;
@@ -128,7 +148,12 @@ public class Replica extends AbstractActor {
         // Send all the messages that have been acked in FIFO order!
         sendAllAckedMessages();
 
-        System.out.println("Received ack from " + getSender().path().name() + " for " + msg.writeIndex + " in epoch " + msg.epoch);
+        System.out.printf(
+            "[Co] Received ack from %s for %d in epoch %d\n",
+            getSender().path().name(),
+            msg.writeIndex,
+            msg.epoch
+        );
     }
 
     /**
@@ -162,8 +187,12 @@ public class Replica extends AbstractActor {
         this.simulateDelay();
         getSender().tell(new WriteAckMsg(msg.epoch, msg.writeIndex), this.self());
 
-        System.out.println("Write requested by the coordinator " + getSender().path().name() + " to "
-                + this.getSelf().path().name() + " for " + msg.v);
+        System.out.printf(
+            "[R] Write requested by the coordinator %s to %s for %d\n",
+            getSender().path().name(),
+            this.getSelf().path().name(),
+            msg.v
+        );
     }
 
     /**
@@ -180,11 +209,26 @@ public class Replica extends AbstractActor {
         if (!this.writeRequests.containsKey(pair))
             return;
 
-        // Apply the write
-        this.v = this.writeRequests.get(pair);
-        this.writeRequests.remove(pair);
+        int value = this.writeRequests.remove(pair);
 
-        System.out.println("[" + this.self().path().name() + "]" + "Applied the write " + msg.writeIndex + " in epoch " + msg.epoch + " with value " + this.v);
+        // If the last write applied is newer than the current write, ignore the message
+        if (this.lastWrite.epoch > msg.epoch || (
+                this.lastWrite.epoch == msg.epoch &&
+                this.lastWrite.writeIndex > msg.writeIndex
+            )) return;
+
+        // Apply the write
+        this.v = value;
+        // Update the last write
+        this.lastWrite = new WriteMsg(this.v, msg.epoch, msg.writeIndex);
+
+        System.out.printf(
+            "[R] [%s] Applied the write %d in epoch %d with value %d\n",
+            this.self().path().name(),
+            msg.writeIndex,
+            msg.epoch,
+            this.v
+        );
     }
 
     /**
@@ -195,7 +239,38 @@ public class Replica extends AbstractActor {
         this.simulateDelay();
         sender.tell(new ReadOkMsg(this.v), this.self());
 
-        System.out.println("Client " + getSender().path().name() + " read req to " + this.getSelf().path().name());
+        System.out.printf(
+            "[C] Client %s read req to %s\n",
+            getSender().path().name(),
+            this.getSelf().path().name()
+        );
+    }
+
+    private void onHeartbeatMsg(HeartbeatMsg msg) {
+
+    }
+
+    private void onCrashMsg(CrashMsg msg) {
+        int chance = this.numberGenerator.nextInt(CRASH_CHANCES);
+
+        // Each replica has a 10% chance of crashing
+        if (chance >= 10) {
+            getSender().tell(new CrashResponseMsg(false), getSelf());
+
+            System.out.printf(
+                "[R] Replica %s received crash message and DIDN'T CRASH\n",
+                getSelf().path().name()
+            );
+        } else {
+            getSender().tell(new CrashResponseMsg(true), getSelf());
+            // The replica has crashed and will not respond to messages anymore
+            getContext().become(createCrashed());
+
+            System.out.printf(
+                "[R] Replica %s received crash message and CRASHED\n",
+                getSelf().path().name()
+            );
+        }
     }
 
     @Override
@@ -204,19 +279,18 @@ public class Replica extends AbstractActor {
                 .match(JoinGroupMsg.class, this::onJoinGroupMsg)
                 .match(ReadMsg.class, this::onReadMsg)
                 .match(UpdateRequestMsg.class, this::onUpdateRequest)
-                // There's no need for a replica to handle WriteAckMsg
-                // .match(WriteAckMsg.class, this::onWriteAckMsg)
                 .match(WriteMsg.class, this::onWriteMsg)
                 .match(WriteOkMsg.class, this::onWriteOkMsg)
+                .match(HeartbeatMsg.class, this::onHeartbeatMsg)
+                .match(CrashMsg.class, this::onCrashMsg)
                 .build();
     }
 
     /**
      * Create a new coordinator replica, similar to the other replicas, but can
      * handle updates
-     * [This seems to be useless for now]
      */
-    public Receive createCoordinator() {
+    public AbstractActor.Receive createCoordinator() {
         return receiveBuilder()
                 .match(JoinGroupMsg.class, this::onJoinGroupMsg)
                 .match(ReadMsg.class, this::onReadMsg)
@@ -224,11 +298,12 @@ public class Replica extends AbstractActor {
                 .match(WriteAckMsg.class, this::onWriteAckMsg)
                 .match(WriteMsg.class, this::onWriteMsg)
                 .match(WriteOkMsg.class, this::onWriteOkMsg)
+                .match(CrashMsg.class, this::onCrashMsg)
                 .build();
     }
 
     // Creates a crashed replica that doesn't handle any more message.
-    final Receive createCrashed() {
+    final AbstractActor.Receive createCrashed() {
         return receiveBuilder()
                 .build();
     }

@@ -28,3 +28,12 @@ Authors:
     it picks another one
 
 - Initially the coordinator is the first replica created
+
+## Running the system
+- Start the system with `gradle run`
+  Replicas and clients are created
+- Press `ENTER` to send a start signal to clients and crash manager so that they
+begin producing request for replicas
+- Press `ENTER` again to send a stop signal to clients forcing them to stop
+producing more requests
+- Press `ENTER` a third time to terminate the system
