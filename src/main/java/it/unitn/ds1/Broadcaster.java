@@ -37,7 +37,13 @@ public class Broadcaster {
         ActorRef crashManager = system.actorOf(CrashManager.props(replicas), "crash_manager");
 
         System.out.print(">>> System ready");
-        requestContinue(system, "send start signal to clients and crash manager");
+        requestContinue(system, "send start signal to all hosts");
+
+        // Send StartMsg to replicas so that they begin sending HeartbeatMsg
+        // (coordinator) and start their timer for heartbeatMsg (replicas)
+        for (ActorRef replica : replicas) {
+            replica.tell(new StartMsg(), ActorRef.noSender());
+        }
 
         // Send StartMsg to clients so that they begin producing requests
         for (ActorRef client : clients) {
