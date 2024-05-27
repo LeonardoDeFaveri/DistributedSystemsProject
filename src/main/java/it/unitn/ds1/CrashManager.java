@@ -24,7 +24,7 @@ public class CrashManager extends AbstractActor {
     public CrashManager(List<ActorRef> replicas) {
         this.replicas = new ArrayList<>();
         this.replicas.addAll(replicas);
-        this.quorum = this.replicas.size() / 2 + 1;
+        this.quorum = (this.replicas.size() / 2) + 1;
         this.numberGenerator = new Random(System.nanoTime());
 
         System.out.printf(
@@ -86,8 +86,8 @@ public class CrashManager extends AbstractActor {
         // Register the replica as crashed
         this.replicas.remove(getSender());
 
-        // No more replica can be made crash
-        if (replicas.size() == quorum) {
+        // No more replica can crash
+        if (replicas.size() <= quorum) {
             this.crashTimer.cancel();
             this.crashTimer = null;
             System.out.println("[CM] Quorum reached, no more crash message will be sent");
