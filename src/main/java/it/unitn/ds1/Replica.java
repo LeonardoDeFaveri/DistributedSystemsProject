@@ -42,10 +42,10 @@ public class Replica extends AbstractActor {
     private WriteMsg lastWrite = new WriteMsg(0, -1, -1);
 
     // The number of  write acks received for each write
-    private final Map<Map.Entry<Integer, Integer>, Set<ActorRef>> writeAcksMap = new HashMap<>();
+    private final Map<Map.Entry<Integer, Integer>, Set<ActorRef>> writeAcksMap;
 
     // The write requests the replica has received from the coordinator, the value is the new value to write
-    private final Map<Map.Entry<Integer, Integer>, Integer> writeRequests = new HashMap<>();
+    private final Map<Map.Entry<Integer, Integer>, Integer> writeRequests;
 
     private int currentWriteToAck = 0; // The write we are currently collecting ACKs for.
 
@@ -57,6 +57,8 @@ public class Replica extends AbstractActor {
         this.coordinatorIndex = coordinatorIndex;
         this.isCoordinator = false;
         this.v = v;
+        this.writeAcksMap = new HashMap<>();
+        this.writeRequests = new HashMap<>();
 
         this.numberGenerator = new Random(System.nanoTime());
         System.out.printf("[R] Replica %s created with value %d\n", getSelf().path().name(), v);
@@ -207,14 +209,16 @@ public class Replica extends AbstractActor {
         if (!this.writeRequests.containsKey(pair))
             return;
 
+        int value = this.writeRequests.remove(pair);
+
         // If the last write applied is newer than the current write, ignore the message
-        if (this.lastWrite.epoch > msg.epoch || (this.lastWrite.epoch == msg.epoch && this.lastWrite.writeIndex > msg.writeIndex))
-            return;
+        if (this.lastWrite.epoch > msg.epoch || (
+                this.lastWrite.epoch == msg.epoch &&
+                this.lastWrite.writeIndex > msg.writeIndex
+            )) return;
 
         // Apply the write
-        this.v = this.writeRequests.get(pair);
-        this.writeRequests.remove(pair);
-
+        this.v = value;
         // Update the last write
         this.lastWrite = new WriteMsg(this.v, msg.epoch, msg.writeIndex);
 
