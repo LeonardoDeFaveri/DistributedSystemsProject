@@ -25,6 +25,9 @@ public class Replica extends AbstractActor {
     private int writeIndex; // The index of the last write operation
     private int currentWriteToAck = 0; // The write we are currently collecting ACKs for.
 
+    // The last update received from each replica. The key is the replicaID, the value is the last update (epoch, writeIndex)
+    private Map<Integer, WriteMsg> lastUpdateForReplica = new HashMap<>();
+
     public Replica(int replicaID, int v, int coordinatorIndex) {
         System.out.printf("[R] Replica %s created with value %d\n", getSelf().path().name(), v);
         this.replicas = new ArrayList<>();
@@ -38,26 +41,6 @@ public class Replica extends AbstractActor {
 
     public static Props props(int replicaID, int v, int coordinatorIndex) {
         return Props.create(Replica.class, () -> new Replica(replicaID, v, coordinatorIndex));
-    }
-
-    private static Map.Entry<Integer, ElectionMsg.LastUpdate> getNewCoordinatorIndex(
-            Map.Entry<Integer, ElectionMsg.LastUpdate> current, Map.Entry<Integer, ElectionMsg.LastUpdate> highest) {
-        if (current.getValue().epoch > highest.getValue().epoch) {
-            // If the epoch of the current node is higher than the other, this node is the most updated
-            return current;
-        } else if (current.getValue().epoch == highest.getValue().epoch &&
-                current.getValue().writeIndex > highest.getValue().writeIndex) {
-            // If the epoch is the same, but the write index is higher, this node is the most updated
-            return current;
-        } else if (current.getValue().epoch == highest.getValue().epoch &&
-                current.getValue().writeIndex == highest.getValue().writeIndex &&
-                current.getKey() > highest.getKey()) {
-            // If both the epoch and the write index are the same, but this has an higher ID, we choose this one
-            // This is because we need a global rule on what node to choose in case of a tie
-            return current;
-        }
-        // Otherwise, we already have the (temporary) most updated node
-        return highest;
     }
 
     /**
@@ -330,7 +313,7 @@ public class Replica extends AbstractActor {
         // then change the message type to COORDINATOR.
         // THe new leader is the node with the latest update (highest epoch, writeIndex), and highest replicaID
         if (msg.participants.containsKey(this.replicaID)) {
-            var mostUpdated = msg.participants.entrySet().stream().reduce(Replica::getNewCoordinatorIndex);
+            var mostUpdated = msg.participants.entrySet().stream().reduce(Utils::getNewCoordinatorIndex);
             this.coordinatorIndex = mostUpdated.get().getKey();
 
             System.out.println("[R:" + this.replicaID + "] New coordinator found: " + this.coordinatorIndex);
