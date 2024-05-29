@@ -30,7 +30,7 @@ public class ElectionTest {
         replicasActors.get(0).tell(new Replica.SetManuallyMsg(1, 5), replicasActors.get(0));
         replicasActors.get(1).tell(new Replica.SetManuallyMsg(3, 1), replicasActors.get(0));
         replicasActors.get(2).tell(new Replica.SetManuallyMsg(2, 5), replicasActors.get(0));
-        replicasActors.get(3).tell(new Replica.SetManuallyMsg(2, 3), replicasActors.get(3));
+        replicasActors.get(3).tell(new Replica.SetManuallyMsg(5, 3), replicasActors.get(3));
         replicasActors.get(4).tell(new Replica.SetManuallyMsg(2, 3), replicasActors.get(4));
 
         replicasActors.get(2).tell(new ElectionMsg(1, new ElectionMsg.LastUpdate(3, 1)), replicasActors.get(1));

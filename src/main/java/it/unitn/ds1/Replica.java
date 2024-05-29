@@ -1,42 +1,29 @@
 package it.unitn.ds1;
 
-import java.io.Serializable;
-import java.util.AbstractMap;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Random;
-import java.util.Set;
-import java.util.stream.Collectors;
-
 import akka.actor.AbstractActor;
 import akka.actor.ActorRef;
 import akka.actor.Props;
 import it.unitn.ds1.models.*;
 
+import java.io.Serializable;
+import java.util.*;
+import java.util.stream.Collectors;
+
 public class Replica extends AbstractActor {
     private final List<ActorRef> replicas; // List of all replicas in the system
+    // The number of  write acks received for each write
+    private final Map<Map.Entry<Integer, Integer>, Set<ActorRef>> writeAcksMap = new HashMap<>();
+    // The write requests the replica has received from the coordinator, the value is the new value to write
+    private final Map<Map.Entry<Integer, Integer>, Integer> writeRequests = new HashMap<>();
+    private final Random numberGenerator;
+    private final int replicaID;
     private int coordinatorIndex; // Index of coordinator replica inside `replicas`
     private boolean isCoordinator;
-
     private int v; // The value of the replica
-
     private int quorum = 0; // The number of nodes that must agree on a write
     private int epoch; // The current epoch
     private int writeIndex; // The index of the last write operation
-
-    // The number of  write acks received for each write
-    private final Map<Map.Entry<Integer, Integer>, Set<ActorRef>> writeAcksMap = new HashMap<>();
-
-    // The write requests the replica has received from the coordinator, the value is the new value to write
-    private final Map<Map.Entry<Integer, Integer>, Integer> writeRequests = new HashMap<>();
-
     private int currentWriteToAck = 0; // The write we are currently collecting ACKs for.
-
-    private final Random numberGenerator;
-    private final int replicaID;
 
     public Replica(int replicaID, int v, int coordinatorIndex) {
         System.out.printf("[R] Replica %s created with value %d\n", getSelf().path().name(), v);
@@ -53,6 +40,26 @@ public class Replica extends AbstractActor {
         return Props.create(Replica.class, () -> new Replica(replicaID, v, coordinatorIndex));
     }
 
+    private static Map.Entry<Integer, ElectionMsg.LastUpdate> getNewCoordinatorIndex(
+            Map.Entry<Integer, ElectionMsg.LastUpdate> current, Map.Entry<Integer, ElectionMsg.LastUpdate> highest) {
+        if (current.getValue().epoch > highest.getValue().epoch) {
+            // If the epoch of the current node is higher than the other, this node is the most updated
+            return current;
+        } else if (current.getValue().epoch == highest.getValue().epoch &&
+                current.getValue().writeIndex > highest.getValue().writeIndex) {
+            // If the epoch is the same, but the write index is higher, this node is the most updated
+            return current;
+        } else if (current.getValue().epoch == highest.getValue().epoch &&
+                current.getValue().writeIndex == highest.getValue().writeIndex &&
+                current.getKey() > highest.getKey()) {
+            // If both the epoch and the write index are the same, but this has an higher ID, we choose this one
+            // This is because we need a global rule on what node to choose in case of a tie
+            return current;
+        }
+        // Otherwise, we already have the (temporary) most updated node
+        return highest;
+    }
+
     /**
      * Makes the process sleep for a random amount of time so as to simulate a
      * delay.
@@ -60,8 +67,11 @@ public class Replica extends AbstractActor {
     private void simulateDelay() {
         // The choice of the delay is highly relevant, to big delays slows down
         // too much the update protocol
-        try { Thread.sleep(this.numberGenerator.nextInt(100)); }
-        catch (InterruptedException e) { e.printStackTrace(); }
+        try {
+            Thread.sleep(this.numberGenerator.nextInt(100));
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -103,12 +113,12 @@ public class Replica extends AbstractActor {
         this.writeAcksMap.putIfAbsent(pair, new HashSet<>());
 
         System.out.printf(
-            "[C] Client %s write req to %s for %d in epoch %d with index %d\n",
-            getSender().path().name(),
-            getSelf().path().name(),
-            msg.v,
-            this.epoch,
-            this.writeIndex
+                "[C] Client %s write req to %s for %d in epoch %d with index %d\n",
+                getSender().path().name(),
+                getSelf().path().name(),
+                msg.v,
+                this.epoch,
+                this.writeIndex
         );
         this.writeIndex++;
     }
@@ -134,10 +144,10 @@ public class Replica extends AbstractActor {
         sendAllAckedMessages();
 
         System.out.printf(
-            "[Co] Received ack from %s for %d in epoch %d\n",
-            getSender().path().name(),
-            msg.writeIndex,
-            msg.epoch
+                "[Co] Received ack from %s for %d in epoch %d\n",
+                getSender().path().name(),
+                msg.writeIndex,
+                msg.epoch
         );
     }
 
@@ -173,10 +183,10 @@ public class Replica extends AbstractActor {
         getSender().tell(new WriteAckMsg(msg.epoch, msg.writeIndex), this.self());
 
         System.out.printf(
-            "[R] Write requested by the coordinator %s to %s for %d\n",
-            getSender().path().name(),
-            this.getSelf().path().name(),
-            msg.v
+                "[R] Write requested by the coordinator %s to %s for %d\n",
+                getSender().path().name(),
+                this.getSelf().path().name(),
+                msg.v
         );
     }
 
@@ -199,11 +209,11 @@ public class Replica extends AbstractActor {
         this.writeRequests.remove(pair);
 
         System.out.printf(
-            "[R] [%s] Applied the write %d in epoch %d with value %d\n",
-            this.self().path().name(),
-            msg.writeIndex,
-            msg.epoch,
-            this.v
+                "[R] [%s] Applied the write %d in epoch %d with value %d\n",
+                this.self().path().name(),
+                msg.writeIndex,
+                msg.epoch,
+                this.v
         );
     }
 
@@ -216,9 +226,9 @@ public class Replica extends AbstractActor {
         sender.tell(new ReadOkMsg(this.v), this.self());
 
         System.out.printf(
-            "[C] Client %s read req to %s\n",
-            getSender().path().name(),
-            this.getSelf().path().name()
+                "[C] Client %s read req to %s\n",
+                getSender().path().name(),
+                this.getSelf().path().name()
         );
     }
 
@@ -239,6 +249,7 @@ public class Replica extends AbstractActor {
                 .match(ElectionMsg.class, this::onElectionMsg)
                 .match(CoordinatorMsg.class, this::onCoordinatorMsg)
                 .match(SetManuallyMsg.class, this::manualChangeMsg)
+                .match(SynchronizationMsg.class, this::onSynchronizationMsg)
                 .build();
     }
 
@@ -278,6 +289,7 @@ public class Replica extends AbstractActor {
     /**
      * Returns the next node on the ring (the next based on index may have crashed, check!)
      * TODO: implement the crash check
+     *
      * @return The next node on the ring
      */
     private ActorRef getNextNode() {
@@ -299,51 +311,40 @@ public class Replica extends AbstractActor {
     /**
      * When an Election message is received:
      * - If the message already contains this replicaID, then change the type to Coordinator, and set the coordinatorID
-     *      to the node which is the most updated in the list (highest epoch and writeIndex), and take the node with the
-     *      highest ID in case of a tie
+     * to the node which is the most updated in the list (highest epoch and writeIndex), and take the node with the
+     * highest ID in case of a tie
      * - Otherwise, add the replicaID of this node + the last update to the list, then propagate to the next node
+     *
      * @param msg The message received
      */
     private void onElectionMsg(ElectionMsg msg) {
         System.out.println("[R:" + this.replicaID + "] election message received from replica " +
                 getSender().path().name() + " with content: " +
-                    msg.participants.entrySet().stream()
-                            .map((content) ->
-                                    String.format("{ replicaID: %d, lastUpdate: (%d, %d) }",
-                                            content.getKey(), content.getValue().epoch, content.getValue().writeIndex)
-                            ).collect(Collectors.joining(", "))
+                msg.participants.entrySet().stream()
+                        .map((content) ->
+                                String.format("{ replicaID: %d, lastUpdate: (%d, %d) }",
+                                        content.getKey(), content.getValue().epoch, content.getValue().writeIndex)
+                        ).collect(Collectors.joining(", "))
         );
         // When a node receives the election message, and the message already contains the node's ID,
         // then change the message type to COORDINATOR.
         // THe new leader is the node with the latest update (highest epoch, writeIndex), and highest replicaID
         if (msg.participants.containsKey(this.replicaID)) {
-            var mostUpdated = msg.participants.entrySet().stream().reduce((current, highest) -> {
-                if (current.getValue().epoch > highest.getValue().epoch) {
-                    // If the epoch of the current node is higher than the other, this node is the most updated
-                    return current;
-                } else if (current.getValue().epoch == highest.getValue().epoch &&
-                        current.getValue().writeIndex > highest.getValue().writeIndex) {
-                    // If the epoch is the same, but the write index is higher, this node is the most updated
-                    return current;
-                } else if (current.getValue().epoch == highest.getValue().epoch &&
-                        current.getValue().writeIndex == highest.getValue().writeIndex &&
-                        current.getKey() > highest.getKey()) {
-                    // If both the epoch and the write index are the same, but this has an higher ID, we choose this one
-                    // This is because we need a global rule on what node to choose in case of a tie
-                    return current;
-                }
-                // Otherwise, we already have the (temporary) most updated node
-                return highest;
-            });
+            var mostUpdated = msg.participants.entrySet().stream().reduce(Replica::getNewCoordinatorIndex);
             this.coordinatorIndex = mostUpdated.get().getKey();
+
             System.out.println("[R:" + this.replicaID + "] New coordinator found: " + this.coordinatorIndex);
             this.onCoordinatorChange();
+            if (this.coordinatorIndex == this.replicaID) {
+                sendSynchronizationMessage();
+                return;
+            }
             getNextNode().tell(new CoordinatorMsg(this.coordinatorIndex, this.replicaID), getSelf());
             return;
         }
         // If it's an election message, and my ID is not in the list, add it and propagate to the next node
         // writeIndex - 1 because we are incrementing the update after we receive it
-        // TODO: should we use the latest write which has been APPLIED?
+        // TODO: should we use the latest write which has been APPLIED? YES
         msg.participants.put(this.replicaID, new ElectionMsg.LastUpdate(this.epoch, this.writeIndex - 1));
 
         ActorRef nextNode = getNextNode();
@@ -354,17 +355,30 @@ public class Replica extends AbstractActor {
         // The replica is the sender of the message, it already has the coordinator index
         if (msg.senderID == this.replicaID)
             return;
+        if (msg.coordinatorID == this.replicaID) {
+            sendSynchronizationMessage();
+            return;
+        }
         System.out.printf("[R%d] received new coordinator %d from %d%n",
                 this.replicaID, msg.coordinatorID, msg.senderID);
         this.coordinatorIndex = msg.coordinatorID; // Set the new coordinator
         getNextNode().tell(msg, getSelf()); // Forward the message to the next node
     }
 
-    public record SetManuallyMsg(int epoch, int writeIndex) implements Serializable {
+    private void onSynchronizationMsg(SynchronizationMsg msg) {
+        this.coordinatorIndex = this.replicas.indexOf(getSender());
+        System.out.printf("[R%d] received synchronization message from %d\n", this.replicaID, this.coordinatorIndex);
+    }
+
+    private void sendSynchronizationMessage() {
+        multicast(new SynchronizationMsg());
     }
 
     public void manualChangeMsg(SetManuallyMsg msg) {
         this.epoch = msg.epoch;
         this.writeIndex = msg.writeIndex;
+    }
+
+    public record SetManuallyMsg(int epoch, int writeIndex) implements Serializable {
     }
 }
