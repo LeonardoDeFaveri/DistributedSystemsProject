@@ -11,6 +11,7 @@ public class Utils {
      * by that node.
      * The node with the highest epoch is chosen. If there is a tie, the node with the highest write index is chosen.
      * If there is still a tie, the node with the highest ID is chosen.
+     *
      * @param current The node we are considering
      * @param highest The node with (temporarily) the newest update
      * @return The node with the newest update

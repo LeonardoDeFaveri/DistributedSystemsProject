@@ -10,20 +10,22 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 public class Replica extends AbstractActor {
+    static final int CRASH_CHANCES = 100;
+
     private final List<ActorRef> replicas; // List of all replicas in the system
+    private final Set<ActorRef> crashedReplicas; // Set of crashed replicas
     // The number of  write acks received for each write
     private final Map<Map.Entry<Integer, Integer>, Set<ActorRef>> writeAcksMap = new HashMap<>();
     // The write requests the replica has received from the coordinator, the value is the new value to write
     private final Map<Map.Entry<Integer, Integer>, Integer> writeRequests = new HashMap<>();
     private final Random numberGenerator;
     private final int replicaID;
-    private int coordinatorIndex; // Index of coordinator replica inside `replicas`
+    private int coordinatorIndex; // Index of the coordinator replica inside `replicas`
     private boolean isCoordinator;
     private int v; // The value of the replica
     private int quorum = 0; // The number of nodes that must agree on a write
     private int epoch; // The current epoch
     private int writeIndex; // The index of the last write operation
-    private int currentWriteToAck = 0; // The write we are currently collecting ACKs for.
 
     // The last update received from each replica. The key is the replicaID, the value is the last update (epoch, writeIndex)
     private Map<Integer, ElectionMsg.LastUpdate> lastUpdateForReplica = new HashMap<>();
@@ -32,6 +34,7 @@ public class Replica extends AbstractActor {
     public Replica(int replicaID, int v, int coordinatorIndex) {
         System.out.printf("[R] Replica %s created with value %d\n", getSelf().path().name(), v);
         this.replicas = new ArrayList<>();
+        this.crashedReplicas = new HashSet<>();
         this.coordinatorIndex = coordinatorIndex;
         this.isCoordinator = false;
         this.v = v;
@@ -39,6 +42,7 @@ public class Replica extends AbstractActor {
         this.lastUpdateApplied = new ElectionMsg.LastUpdate(-1, -1);
 
         this.numberGenerator = new Random(System.nanoTime());
+        System.out.printf("[R] Replica %s created with value %d\n", getSelf().path().name(), v);
     }
 
     public static Props props(int replicaID, int v, int coordinatorIndex) {
@@ -63,7 +67,7 @@ public class Replica extends AbstractActor {
 
     private void onJoinGroupMsg(JoinGroupMsg msg) {
         this.replicas.addAll(msg.replicas);
-        this.quorum = (this.replicas.size() / 2) + 1;
+        this.quorum = (this.replicas.size() / 2); // ! No + 1, because one is itself
 
         this.isCoordinator = this.replicas.indexOf(this.getSelf()) == this.coordinatorIndex;
         if (this.isCoordinator) {
@@ -72,7 +76,12 @@ public class Replica extends AbstractActor {
     }
 
     private void multicast(Serializable msg) {
-        for (ActorRef replica : this.replicas) {
+        multicast(msg, false);
+    }
+
+    private void multicast(Serializable msg, boolean excludeItself) {
+        var replicas = this.replicas.stream().filter(r -> !excludeItself || r != this.getSelf()).toList();
+        for (ActorRef replica : replicas) {
             this.simulateDelay();
             replica.tell(msg, this.self());
         }
@@ -96,10 +105,11 @@ public class Replica extends AbstractActor {
         // Add the new write request to the map, so that the acks can be received
         var pair = new AbstractMap.SimpleEntry<>(this.epoch, this.writeIndex);
         this.writeAcksMap.putIfAbsent(pair, new HashSet<>());
-        this.writeIndex++;
 
         // The coordinator asks all the replicas to update
         multicast(new WriteMsg(msg.v, this.epoch, this.writeIndex));
+
+        this.writeIndex++;
 
         System.out.printf(
                 "[C] Client %s write req to %s for %d in epoch %d with index %d\n",
@@ -150,12 +160,13 @@ public class Replica extends AbstractActor {
         // Starting from the first message to send, if the quorum has been reached, send the message
         // Then, go to the next message (continue until the last write has been reached)
         // If any of the writes didn't reach the quorum, stop!
-        while (this.currentWriteToAck < this.writeIndex) {
-            var pair = new AbstractMap.SimpleEntry<>(this.epoch, this.currentWriteToAck);
+        int currentWriteToAck = this.lastUpdateApplied.writeIndex + 1;
+        while (currentWriteToAck < this.writeIndex) {
+            var pair = new AbstractMap.SimpleEntry<>(this.epoch, currentWriteToAck);
             if (this.writeAcksMap.containsKey(pair) && this.writeAcksMap.get(pair).size() >= this.quorum) {
-                multicast(new WriteOkMsg(this.epoch, this.currentWriteToAck));
-                this.writeAcksMap.remove(pair);
-                this.currentWriteToAck++;
+                onWriteOkMsg(new WriteOkMsg(this.epoch, currentWriteToAck)); // Apply the write, then send the messages
+                multicast(new WriteOkMsg(this.epoch, currentWriteToAck), true);
+                currentWriteToAck++;
             } else {
                 break;
             }
@@ -198,8 +209,17 @@ public class Replica extends AbstractActor {
         if (!this.writeRequests.containsKey(pair))
             return;
 
+        // If the last write applied is newer than the current write, ignore the message
+        // If we have already applied the write, ignore the message
+        if (this.lastUpdateApplied.epoch > msg.epoch || (
+                this.lastUpdateApplied.epoch == msg.epoch &&
+                        (this.lastUpdateApplied.writeIndex > msg.writeIndex ||
+                                this.lastUpdateApplied.writeIndex == msg.writeIndex)
+        )) return;
+
         // Apply the write
         this.v = this.writeRequests.get(pair);
+        // Update the last write
         this.lastUpdateApplied = new ElectionMsg.LastUpdate(msg.epoch, msg.writeIndex);
 
         System.out.printf(
@@ -233,7 +253,6 @@ public class Replica extends AbstractActor {
     private void onCoordinatorChange() {
         this.epoch++;
         this.writeIndex = 0;
-        this.currentWriteToAck = 0;
     }
 
     /**
@@ -374,6 +393,37 @@ public class Replica extends AbstractActor {
     }
 
     /**
+     * Crash
+     */
+
+    private void onHeartbeatMsg(HeartbeatMsg msg) {
+
+    }
+
+    private void onCrashMsg(CrashMsg msg) {
+        int chance = this.numberGenerator.nextInt(CRASH_CHANCES);
+
+        // Each replica has a 10% chance of crashing
+        if (chance >= 10) {
+            getSender().tell(new CrashResponseMsg(false), getSelf());
+
+            System.out.printf(
+                    "[R] Replica %s received crash message and DIDN'T CRASH\n",
+                    getSelf().path().name()
+            );
+        } else {
+            getSender().tell(new CrashResponseMsg(true), getSelf());
+            // The replica has crashed and will not respond to messages anymore
+            getContext().become(createCrashed());
+
+            System.out.printf(
+                    "[R] Replica %s received crash message and CRASHED\n",
+                    getSelf().path().name()
+            );
+        }
+    }
+
+    /**
      * Message listeners
      */
 
@@ -389,6 +439,8 @@ public class Replica extends AbstractActor {
                 .match(CoordinatorMsg.class, this::onCoordinatorMsg)
                 .match(SynchronizationMsg.class, this::onSynchronizationMsg)
                 .match(LostUpdatesMsg.class, this::onLostUpdatesMsg)
+                .match(HeartbeatMsg.class, this::onHeartbeatMsg)
+                .match(CrashMsg.class, this::onCrashMsg)
                 .build();
     }
 
@@ -404,6 +456,7 @@ public class Replica extends AbstractActor {
                 .match(WriteAckMsg.class, this::onWriteAckMsg)
                 .match(WriteMsg.class, this::onWriteMsg)
                 .match(WriteOkMsg.class, this::onWriteOkMsg)
+                .match(CrashMsg.class, this::onCrashMsg)
                 .build();
     }
 

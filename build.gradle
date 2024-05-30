@@ -30,7 +30,6 @@ compileJava {
     options.compilerArgs += ["-Xlint:deprecation"]
 }
 
-
 // Old settings changed for deprecated warning
 // mainClassName = "it.unitn.ds1.Broadcaster"
 application {
