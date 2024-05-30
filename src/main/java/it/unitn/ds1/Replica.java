@@ -26,7 +26,8 @@ public class Replica extends AbstractActor {
     private int currentWriteToAck = 0; // The write we are currently collecting ACKs for.
 
     // The last update received from each replica. The key is the replicaID, the value is the last update (epoch, writeIndex)
-    private Map<Integer, WriteMsg> lastUpdateForReplica = new HashMap<>();
+    private Map<Integer, ElectionMsg.LastUpdate> lastUpdateForReplica = new HashMap<>();
+    private ElectionMsg.LastUpdate lastUpdateApplied; // Last write applied by the replica
 
     public Replica(int replicaID, int v, int coordinatorIndex) {
         System.out.printf("[R] Replica %s created with value %d\n", getSelf().path().name(), v);
@@ -35,6 +36,7 @@ public class Replica extends AbstractActor {
         this.isCoordinator = false;
         this.v = v;
         this.replicaID = replicaID;
+        this.lastUpdateApplied = new ElectionMsg.LastUpdate(-1, -1);
 
         this.numberGenerator = new Random(System.nanoTime());
     }
@@ -44,7 +46,7 @@ public class Replica extends AbstractActor {
     }
 
     /**
-     * Makes the process sleep for a random amount of time so as to simulate a
+     * Makes the process sleep for a random amount of time to simulate a
      * delay.
      */
     private void simulateDelay() {
@@ -76,6 +78,9 @@ public class Replica extends AbstractActor {
         }
     }
 
+    /**
+     * When a client sends a request to update the value of the replica
+     */
     private void onUpdateRequest(UpdateRequestMsg msg) {
         // If the replica is not the coordinator
         if (!this.isCoordinator) {
@@ -83,17 +88,18 @@ public class Replica extends AbstractActor {
             var coordinator = this.replicas.get(this.coordinatorIndex);
             this.simulateDelay();
             coordinator.tell(msg, this.self());
-            this.writeIndex++;
+            // ! WARNING: I'm moving this to onWriteMsg, I think that we should increase it when we add the request to the list
+            // this.writeIndex++;
             return;
         }
-
-        // Implement the quorum protocol. The coordinator asks all the replicas
-        // to update
-        multicast(new WriteMsg(msg.v, this.epoch, this.writeIndex));
 
         // Add the new write request to the map, so that the acks can be received
         var pair = new AbstractMap.SimpleEntry<>(this.epoch, this.writeIndex);
         this.writeAcksMap.putIfAbsent(pair, new HashSet<>());
+        this.writeIndex++;
+
+        // The coordinator asks all the replicas to update
+        multicast(new WriteMsg(msg.v, this.epoch, this.writeIndex));
 
         System.out.printf(
                 "[C] Client %s write req to %s for %d in epoch %d with index %d\n",
@@ -103,9 +109,11 @@ public class Replica extends AbstractActor {
                 this.epoch,
                 this.writeIndex
         );
-        this.writeIndex++;
     }
 
+    /**
+     * When the coordinator receives an ack from a replica
+     */
     private void onWriteAckMsg(WriteAckMsg msg) {
         if (!this.isCoordinator)
             return;
@@ -158,9 +166,12 @@ public class Replica extends AbstractActor {
      * The coordinator is requesting to write a new value to the replicas
      */
     private void onWriteMsg(WriteMsg msg) {
+        if (getSender() == this.getSelf()) // Multicast sends to itself
+            return;
         // Add the request to the list, so that it is ready if the coordinator requests
         // the update
         this.writeRequests.put(new AbstractMap.SimpleEntry<>(msg.epoch, msg.writeIndex), msg.v);
+        this.writeIndex++;
         // Send the acknowledgement to the coordinator
         this.simulateDelay();
         getSender().tell(new WriteAckMsg(msg.epoch, msg.writeIndex), this.self());
@@ -189,7 +200,7 @@ public class Replica extends AbstractActor {
 
         // Apply the write
         this.v = this.writeRequests.get(pair);
-        this.writeRequests.remove(pair);
+        this.lastUpdateApplied = new ElectionMsg.LastUpdate(msg.epoch, msg.writeIndex);
 
         System.out.printf(
                 "[R] [%s] Applied the write %d in epoch %d with value %d\n",
@@ -216,53 +227,9 @@ public class Replica extends AbstractActor {
     }
 
     /**
-     * Message listeners
-     */
-
-    @Override
-    public Receive createReceive() {
-        return receiveBuilder()
-                .match(JoinGroupMsg.class, this::onJoinGroupMsg)
-                .match(ReadMsg.class, this::onReadMsg)
-                .match(UpdateRequestMsg.class, this::onUpdateRequest)
-                // There's no need for a replica to handle WriteAckMsg
-                //.match(WriteAckMsg.class, this::onWriteAckMsg)
-                .match(WriteMsg.class, this::onWriteMsg)
-                .match(WriteOkMsg.class, this::onWriteOkMsg)
-                .match(ElectionMsg.class, this::onElectionMsg)
-                .match(CoordinatorMsg.class, this::onCoordinatorMsg)
-                .match(SetManuallyMsg.class, this::manualChangeMsg)
-                .match(SynchronizationMsg.class, this::onSynchronizationMsg)
-                .build();
-    }
-
-    /**
-     * Create a new coordinator replica, similar to the other replicas, but can
-     * handle updates
-     */
-    public AbstractActor.Receive createCoordinator() {
-        return receiveBuilder()
-                .match(JoinGroupMsg.class, this::onJoinGroupMsg)
-                .match(ReadMsg.class, this::onReadMsg)
-                .match(UpdateRequestMsg.class, this::onUpdateRequest)
-                .match(WriteAckMsg.class, this::onWriteAckMsg)
-                .match(WriteMsg.class, this::onWriteMsg)
-                .match(WriteOkMsg.class, this::onWriteOkMsg)
-                .match(SetManuallyMsg.class, this::manualChangeMsg)
-                .build();
-    }
-
-    // Creates a crashed replica that doesn't handle any more message.
-    final AbstractActor.Receive createCrashed() {
-        return receiveBuilder()
-                .build();
-    }
-
-    /**
      * Election behaviour
      */
 
-    // TODO: implement behavior
     private void onCoordinatorChange() {
         this.epoch++;
         this.writeIndex = 0;
@@ -271,7 +238,6 @@ public class Replica extends AbstractActor {
 
     /**
      * Returns the next node on the ring (the next based on index may have crashed, check!)
-     * TODO: implement the crash check
      *
      * @return The next node on the ring
      */
@@ -283,11 +249,10 @@ public class Replica extends AbstractActor {
 
     /**
      * Send an election message to the next node
-     * TODO: should the last write index based on the updates applied?
      */
     public void sendElectionMessage() {
         var nextNode = this.getNextNode();
-        var electionMsg = new ElectionMsg(this.replicaID, new ElectionMsg.LastUpdate(this.epoch, this.writeIndex));
+        var electionMsg = new ElectionMsg(this.replicaID, this.lastUpdateApplied);
         nextNode.tell(electionMsg, this.getSelf());
     }
 
@@ -317,29 +282,37 @@ public class Replica extends AbstractActor {
             this.coordinatorIndex = mostUpdated.get().getKey();
 
             System.out.println("[R:" + this.replicaID + "] New coordinator found: " + this.coordinatorIndex);
-            this.onCoordinatorChange();
             if (this.coordinatorIndex == this.replicaID) {
+                this.lastUpdateForReplica = msg.participants;
                 sendSynchronizationMessage();
+                sendLostUpdates();
+                this.onCoordinatorChange();
                 return;
             }
-            getNextNode().tell(new CoordinatorMsg(this.coordinatorIndex, this.replicaID), getSelf());
+            getNextNode().tell(new CoordinatorMsg(this.coordinatorIndex, this.replicaID, msg.participants), getSelf());
             return;
         }
         // If it's an election message, and my ID is not in the list, add it and propagate to the next node
         // writeIndex - 1 because we are incrementing the update after we receive it
-        // TODO: should we use the latest write which has been APPLIED? YES
-        msg.participants.put(this.replicaID, new ElectionMsg.LastUpdate(this.epoch, this.writeIndex - 1));
+        msg.participants.put(this.replicaID, this.lastUpdateApplied);
 
         ActorRef nextNode = getNextNode();
         nextNode.tell(msg, this.getSelf());
     }
 
+    /**
+     * The Election message has been received by all the nodes, and the coordinator has been elected.
+     * The coordinator sends a message to all the nodes to synchronize the epoch and the writeIndex
+     */
     private void onCoordinatorMsg(CoordinatorMsg msg) {
         // The replica is the sender of the message, it already has the coordinator index
         if (msg.senderID == this.replicaID)
             return;
         if (msg.coordinatorID == this.replicaID) {
+            this.lastUpdateForReplica = msg.participants;
             sendSynchronizationMessage();
+            sendLostUpdates();
+            this.onCoordinatorChange();
             return;
         }
         System.out.printf("[R%d] received new coordinator %d from %d%n",
@@ -348,20 +321,95 @@ public class Replica extends AbstractActor {
         getNextNode().tell(msg, getSelf()); // Forward the message to the next node
     }
 
+    /**
+     * The new coordinator has sent the synchronization message, so the replicas can update their epoch and writeIndex
+     */
     private void onSynchronizationMsg(SynchronizationMsg msg) {
         this.coordinatorIndex = this.replicas.indexOf(getSender());
+        this.isCoordinator = (this.replicaID == this.coordinatorIndex);
+        if (this.isCoordinator) { // Multicast sends to itself
+            getContext().become(createCoordinator());
+            return;
+        }
+        this.onCoordinatorChange();
         System.out.printf("[R%d] received synchronization message from %d\n", this.replicaID, this.coordinatorIndex);
     }
 
+    /**
+     * Send the synchronization message to all nodes
+     */
     private void sendSynchronizationMessage() {
         multicast(new SynchronizationMsg());
     }
 
-    public void manualChangeMsg(SetManuallyMsg msg) {
-        this.epoch = msg.epoch;
-        this.writeIndex = msg.writeIndex;
+    /**
+     * The coordinator, which is the one with the most recent updates, sends all the missed updates to each replica.
+     */
+    private void sendLostUpdates() {
+        for (var entry : this.lastUpdateForReplica.entrySet()) {
+            var replica = this.replicas.get(entry.getKey());
+            var lastUpdate = entry.getValue();
+            var missedUpdatesList = new ArrayList<WriteMsg>();
+            for (int i = lastUpdate.writeIndex + 1; i < this.lastUpdateApplied.writeIndex + 1; i++) {
+                var ithRequest = this.writeRequests.get(new AbstractMap.SimpleEntry<>(this.epoch, i));
+                missedUpdatesList.add(new WriteMsg(ithRequest, this.epoch, i));
+            }
+            if (missedUpdatesList.isEmpty())
+                continue;
+            this.simulateDelay();
+            replica.tell(new LostUpdatesMsg(missedUpdatesList), getSelf());
+        }
     }
 
-    public record SetManuallyMsg(int epoch, int writeIndex) implements Serializable {
+    /**
+     * The replica has received the lost updates from the coordinator, so it can apply them
+     */
+    private void onLostUpdatesMsg(LostUpdatesMsg msg) {
+        System.out.printf("[R%d] received %d missed updates, last update: (%d, %d), new updates received: %s%n",
+                this.replicaID, msg.missedUpdates.size(), lastUpdateApplied.epoch, lastUpdateApplied.writeIndex,
+                msg.missedUpdates.stream().map(update -> String.format("(%d, %d)", update.epoch, update.writeIndex)).collect(Collectors.toList()));
+        for (var update : msg.missedUpdates) {
+            this.v = update.v;
+        }
+    }
+
+    /**
+     * Message listeners
+     */
+
+    @Override
+    public Receive createReceive() {
+        return receiveBuilder()
+                .match(JoinGroupMsg.class, this::onJoinGroupMsg)
+                .match(ReadMsg.class, this::onReadMsg)
+                .match(UpdateRequestMsg.class, this::onUpdateRequest)
+                .match(WriteMsg.class, this::onWriteMsg)
+                .match(WriteOkMsg.class, this::onWriteOkMsg)
+                .match(ElectionMsg.class, this::onElectionMsg)
+                .match(CoordinatorMsg.class, this::onCoordinatorMsg)
+                .match(SynchronizationMsg.class, this::onSynchronizationMsg)
+                .match(LostUpdatesMsg.class, this::onLostUpdatesMsg)
+                .build();
+    }
+
+    /**
+     * Create a new coordinator replica, similar to the other replicas, but can
+     * handle updates
+     */
+    public AbstractActor.Receive createCoordinator() {
+        return receiveBuilder()
+                .match(JoinGroupMsg.class, this::onJoinGroupMsg)
+                .match(ReadMsg.class, this::onReadMsg)
+                .match(UpdateRequestMsg.class, this::onUpdateRequest)
+                .match(WriteAckMsg.class, this::onWriteAckMsg)
+                .match(WriteMsg.class, this::onWriteMsg)
+                .match(WriteOkMsg.class, this::onWriteOkMsg)
+                .build();
+    }
+
+    // Creates a crashed replica that doesn't handle any more message.
+    final AbstractActor.Receive createCrashed() {
+        return receiveBuilder()
+                .build();
     }
 }
