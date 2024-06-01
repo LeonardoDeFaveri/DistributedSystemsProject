@@ -4,9 +4,11 @@ import akka.actor.AbstractActor;
 import akka.actor.ActorRef;
 import akka.actor.Props;
 import it.unitn.ds1.models.*;
+import scala.concurrent.duration.Duration;
 
 import java.io.Serializable;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 public class Replica extends AbstractActor {
@@ -75,15 +77,44 @@ public class Replica extends AbstractActor {
         }
     }
 
+    /**
+     * Overload of sendDelayed, with a random delay up to 100ms
+     */
+    private void sendDelayed(Serializable msg, ActorRef receiver) {
+        int delay = this.numberGenerator.nextInt(100);
+        sendDelayed(msg, receiver, delay);
+    }
+
+    /**
+     * Send a delayed message to a replica
+     * @param msg The message to send
+     * @param receiver The replica to send the message to
+     * @param delay The delay in milliseconds
+     */
+    private void sendDelayed(Serializable msg, ActorRef receiver, int delay) {
+        getContext().system().scheduler().scheduleOnce(
+                Duration.create(delay, TimeUnit.MILLISECONDS), // delay
+                receiver, // Receiver
+                msg, // Message to send
+                getContext().system().dispatcher(), // Executor
+                getSelf() // Sender
+        );
+    }
+
     private void multicast(Serializable msg) {
         multicast(msg, false);
     }
 
+    /**
+     * Multicasts a message to all replicas
+     * @param msg The message to send
+     * @param excludeItself Whether the replica should exclude itself from the multicast
+     */
     private void multicast(Serializable msg, boolean excludeItself) {
         var replicas = this.replicas.stream().filter(r -> !excludeItself || r != this.getSelf()).toList();
+
         for (ActorRef replica : replicas) {
-            this.simulateDelay();
-            replica.tell(msg, this.self());
+            sendDelayed(msg, replica);
         }
     }
 
@@ -95,8 +126,7 @@ public class Replica extends AbstractActor {
         if (!this.isCoordinator) {
             // Send the request to the coordinator
             var coordinator = this.replicas.get(this.coordinatorIndex);
-            this.simulateDelay();
-            coordinator.tell(msg, this.self());
+            sendDelayed(msg, coordinator);
             // ! WARNING: I'm moving this to onWriteMsg, I think that we should increase it when we add the request to the list
             // this.writeIndex++;
             return;
@@ -184,8 +214,7 @@ public class Replica extends AbstractActor {
         this.writeRequests.put(new AbstractMap.SimpleEntry<>(msg.epoch, msg.writeIndex), msg.v);
         this.writeIndex++;
         // Send the acknowledgement to the coordinator
-        this.simulateDelay();
-        getSender().tell(new WriteAckMsg(msg.epoch, msg.writeIndex), this.self());
+        sendDelayed(new WriteAckMsg(msg.epoch, msg.writeIndex), getSender());
 
         System.out.printf(
                 "[R] Write requested by the coordinator %s to %s for %d\n",
@@ -236,8 +265,7 @@ public class Replica extends AbstractActor {
      */
     private void onReadMsg(ReadMsg msg) {
         ActorRef sender = getSender();
-        this.simulateDelay();
-        sender.tell(new ReadOkMsg(this.v), this.self());
+        sendDelayed(new ReadOkMsg(this.v), this.self());
 
         System.out.printf(
                 "[C] Client %s read req to %s\n",
@@ -375,8 +403,7 @@ public class Replica extends AbstractActor {
             }
             if (missedUpdatesList.isEmpty())
                 continue;
-            this.simulateDelay();
-            replica.tell(new LostUpdatesMsg(missedUpdatesList), getSelf());
+            sendDelayed(new LostUpdatesMsg(missedUpdatesList), replica);
         }
     }
 
