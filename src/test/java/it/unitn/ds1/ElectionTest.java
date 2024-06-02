@@ -7,11 +7,11 @@ import it.unitn.ds1.models.*;
 import java.io.IOException;
 import java.util.ArrayList;
 
-public class ElectionTest {
+import org.junit.Test;
 
-    //    @Test
-//    public void testElection() {
-    public static void main(String[] args) {
+public class ElectionTest {
+    @Test
+    public void testElection() {
         final ActorSystem system = ActorSystem.create("electionTest");
         final int N_REPLICAS = 5;
 
@@ -55,6 +55,9 @@ public class ElectionTest {
 
         // Then, we start the election algorithm
         replicas.get(0).tell(new ElectionMsg(4, new ElectionMsg.LastUpdate(0, 2)), replicas.get(4));
+
+        // Required to see all output
+        while (replicas.size() > 0) {}
 
         System.out.printf(">>> Press ENTER <<<\n");
         try {
