@@ -1,7 +1,9 @@
 package it.unitn.ds1.models.crash_detection;
 
 import java.io.Serializable;
-import java.util.AbstractMap;
+
+import akka.actor.ActorRef;
+import it.unitn.ds1.utils.WriteId;
 
 /**
  * This message is sent by a replica to itself when a timeout expires and if
@@ -9,9 +11,11 @@ import java.util.AbstractMap;
  * the coordinator is marked as crashed.
  */
 public class WriteOkReceivedMsg implements Serializable {
-    public final AbstractMap.SimpleEntry<Integer, Integer> writeMsg;
+    public final ActorRef client;
+    public final WriteId writeMsgId;
 
-    public WriteOkReceivedMsg(AbstractMap.SimpleEntry<Integer, Integer> writeMsg) {
-        this.writeMsg = writeMsg;
+    public WriteOkReceivedMsg(ActorRef client, WriteId writeMsgId) {
+        this.client = client;
+        this.writeMsgId = writeMsgId;
     }
 }

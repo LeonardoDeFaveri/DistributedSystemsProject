@@ -2,15 +2,18 @@ package it.unitn.ds1.models;
 
 import java.io.Serializable;
 
+import it.unitn.ds1.utils.UpdateRequestId;
+import it.unitn.ds1.utils.WriteId;
+
 /**
  * Sent by the coordinator, to apply the write operation.
  */
 public class WriteOkMsg implements Serializable {
-    public final int epoch; // The epoch of the coordinator
-    public final int writeIndex; // The index of the write operation
+    public final WriteId id;
+    public final UpdateRequestId updateRequestId;
 
-    public WriteOkMsg(int epoch, int writeIndex) {
-        this.epoch = epoch;
-        this.writeIndex = writeIndex;
+    public WriteOkMsg(WriteId id, UpdateRequestId updateRequestId) {
+        this.id = id;
+        this.updateRequestId = updateRequestId;
     }
 }

@@ -7,8 +7,10 @@ import java.io.Serializable;
  */
 public class ReadOkMsg implements Serializable {
     public final int v;
+    public final int id;
 
-    public ReadOkMsg(int v) {
+    public ReadOkMsg(int v, int id) {
         this.v = v;
+        this.id = id;
     }
 }

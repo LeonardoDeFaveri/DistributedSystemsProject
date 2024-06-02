@@ -2,15 +2,16 @@ package it.unitn.ds1.models;
 
 import java.io.Serializable;
 
+import it.unitn.ds1.utils.WriteId;
+
 /**
  * Sent by the replicas, to acknowledge the write operation requested by the coordinator.
  */
 public class WriteAckMsg implements Serializable {
-    public final int epoch; // Epoch of the coordinator
-    public final int writeIndex; // Index of the write operation
+    // ID of WriteMsg to ACK
+    public final WriteId id;
 
-    public WriteAckMsg(int epoch, int writeIndex) {
-        this.epoch = epoch;
-        this.writeIndex = writeIndex;
+    public WriteAckMsg(WriteId id) {
+        this.id = id;
     }
 }

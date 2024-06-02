@@ -1,7 +1,6 @@
 package it.unitn.ds1;
 
 import java.io.Serializable;
-import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
@@ -23,6 +22,7 @@ import it.unitn.ds1.models.ReadMsg;
 import it.unitn.ds1.models.ReadOkMsg;
 import it.unitn.ds1.models.StartMsg;
 import it.unitn.ds1.models.UpdateRequestMsg;
+import it.unitn.ds1.models.UpdateRequestOkMsg;
 import it.unitn.ds1.models.WriteAckMsg;
 import it.unitn.ds1.models.WriteMsg;
 import it.unitn.ds1.models.WriteOkMsg;
@@ -30,12 +30,15 @@ import it.unitn.ds1.models.crash_detection.HearbeatReceivedMsg;
 import it.unitn.ds1.models.crash_detection.HeartbeatMsg;
 import it.unitn.ds1.models.crash_detection.WriteMsgReceivedMsg;
 import it.unitn.ds1.models.crash_detection.WriteOkReceivedMsg;
+import it.unitn.ds1.utils.UpdateRequestId;
+import it.unitn.ds1.utils.WriteId;
 import scala.concurrent.duration.Duration;
 
 public class Replica extends AbstractActor {
     static final int CRASH_CHANCES = 100;
     static final int DELAY = 100;
-    static final long WRITEOK_TIMEOUT = 500;
+    static final long WRITEOK_TIMEOUT = 3000;
+    static final long WRITEMSG_TIMEOUT = 3000;
     static final long SEND_HEARTBEAT_TIMEOUT = 50;
     static final long RECEIVE_HEARTBEAT_TIMEOUT = 300;
 
@@ -44,20 +47,29 @@ public class Replica extends AbstractActor {
     private int coordinatorIndex; // Index of the coordinator replica inside `replicas`
     private boolean isCoordinator;
 
-    private int v; // The value of the replica
+    private int value; // The value of the replica
 
     private int quorum = 0; // The number of nodes that must agree on a write
     private int epoch; // The current epoch
     private int writeIndex; // The index of the last write operation
 
     // The last write operation, to prevent an old write to be applied after a new one
-    private WriteMsg lastWrite = new WriteMsg(0, -1, -1);
+    private WriteId lastWrite = new WriteId(0, -1);
 
-    // The number of  write acks received for each write
-    private final Map<Map.Entry<Integer, Integer>, Set<ActorRef>> writeAcksMap;
+    private final Set<UpdateRequestId> pendingUpdateRequests;
+
+    // The number of write acks received for each write
+    private final Map<WriteId, Set<ActorRef>> writeAcksMap;
 
     // The write requests the replica has received from the coordinator, the value is the new value to write
-    private final Map<Map.Entry<Integer, Integer>, Integer> writeRequests;
+    private final Map<WriteId, Integer> writeRequests;
+    
+    // Maps each write request to the updateRequest that initiated it
+    private final Map<WriteId, UpdateRequestId> writesToUpdates;
+
+    // Uses <clientRef, updateIndex> to keep track for those update request received
+    // by a client that will need to be ACKed back
+    private final Set<UpdateRequestId> updateRequests;
 
     private int currentWriteToAck = 0; // The write we are currently collecting ACKs for.
 
@@ -70,17 +82,20 @@ public class Replica extends AbstractActor {
     private Cancellable heartbeatTimer;
     private long lastContact;
 
-    public Replica(int v, int coordinatorIndex) {
+    public Replica(int value, int coordinatorIndex) {
         this.replicas = new ArrayList<>();
         this.crashedReplicas = new HashSet<>();
         this.coordinatorIndex = coordinatorIndex;
         this.isCoordinator = false;
-        this.v = v;
+        this.value = value;
         this.writeAcksMap = new HashMap<>();
         this.writeRequests = new HashMap<>();
+        this.writesToUpdates = new HashMap<>();
+        this.updateRequests = new HashSet<>();
+        this.pendingUpdateRequests = new HashSet<>();
 
         this.numberGenerator = new Random(System.nanoTime());
-        System.out.printf("[R] Replica %s created with value %d\n", getSelf().path().name(), v);
+        System.out.printf("[R] Replica %s created with value %d\n", getSelf().path().name(), value);
     }
 
     public static Props props(int v, int coordinatorIndex) {
@@ -88,14 +103,19 @@ public class Replica extends AbstractActor {
     }
 
     /**
-     * Makes the process sleep for a random amount of time to simulate a
-     * delay.
+     * Sends `msg` to `receiver` with a random delay of `[0, DELAY)`ms.
+     * @param receiver receiver of the message
+     * @param msg message to send
      */
-    private void simulateDelay() {
-        // The choice of the delay is highly relevant, to big delays slows down
-        // too much the update protocol
-        try { Thread.sleep(this.numberGenerator.nextInt(DELAY)); }
-        catch (InterruptedException e) { e.printStackTrace(); }
+    private void tellWithDelay(ActorRef receiver, Serializable msg) {
+        int delay = this.numberGenerator.nextInt(0, DELAY);
+        getContext().system().scheduler().scheduleOnce(
+            Duration.create(delay, TimeUnit.MILLISECONDS),
+            receiver,
+            msg,
+            getContext().system().dispatcher(),
+            getSelf()
+        );
     }
 
     // -------------------------------------------------------------------------
@@ -115,7 +135,7 @@ public class Replica extends AbstractActor {
             // Begin sending heartbeat messages to replicas
             this.heartbeatTimer = getContext().system().scheduler().scheduleWithFixedDelay(
                 Duration.create(0, TimeUnit.SECONDS), // when to start generating messages
-                Duration.create(SEND_HEARTBEAT_TIMEOUT, TimeUnit.SECONDS), // how frequently generate them
+                Duration.create(SEND_HEARTBEAT_TIMEOUT, TimeUnit.MILLISECONDS), // how frequently generate them
                 getSelf(), // All replicas
                 new HeartbeatMsg(), // the message to send
                 getContext().system().dispatcher(), // system dispatcher
@@ -125,8 +145,8 @@ public class Replica extends AbstractActor {
         } else {
             // Begins sending heartbeat 
             this.heartbeatTimer = getContext().system().scheduler().scheduleWithFixedDelay(
-                Duration.create(0, TimeUnit.SECONDS),
-                Duration.create(RECEIVE_HEARTBEAT_TIMEOUT, TimeUnit.SECONDS),
+                Duration.create(1, TimeUnit.SECONDS),
+                Duration.create(RECEIVE_HEARTBEAT_TIMEOUT, TimeUnit.MILLISECONDS),
                 getSelf(),
                 new HearbeatReceivedMsg(),
                 getContext().system().dispatcher(),
@@ -139,54 +159,81 @@ public class Replica extends AbstractActor {
 
     private void multicast(Serializable msg) {
         for (ActorRef replica : this.replicas) {
-            this.simulateDelay();
-            replica.tell(msg, this.self());
+            this.tellWithDelay(replica, msg);
         }
     }
 
     private void onUpdateRequest(UpdateRequestMsg msg) {
+        // If the request comes from a client, register its arrival.
+        // This replica will later have to send an ACK back to this client
+        if (!this.replicas.contains(getSender())) {
+            this.updateRequests.add(msg.id);
+            System.out.printf(
+                "[R] Replica %s registered write request %d for %d from client %s\n",
+                getSelf().path().name(),
+                msg.id.index,
+                msg.value,
+                msg.id.client.path().name()
+            );
+        }
+
         // If the replica is not the coordinator
         if (!this.isCoordinator) {
             // Send the request to the coordinator
             var coordinator = this.replicas.get(this.coordinatorIndex);
-            this.simulateDelay();
-            coordinator.tell(msg, this.self());
+            this.tellWithDelay(coordinator, msg);
+
+            // Registers this updateRequest and waits for the corresponding
+            // WriteMsg from the coordinator
+            this.pendingUpdateRequests.add(msg.id);
+            // Sets a timeout for the broadcast from the coordinator
+            getContext().system().scheduler().scheduleOnce(
+                Duration.create(WRITEMSG_TIMEOUT, TimeUnit.MILLISECONDS),
+                getSelf(),
+                new WriteMsgReceivedMsg(msg.id),
+                getContext().system().dispatcher(),
+                getSelf()
+            );
+
+            System.out.printf(
+                "[R] Replica %s forwared write req to coordinator %s for %d in epoch %d with index %d\n",
+                getSelf().path().name(),
+                coordinator.path().name(),
+                msg.value,
+                this.epoch,
+                this.writeIndex
+            );
+
             this.writeIndex++;
             return;
         }
 
+        // The pair associated to the new writeMsg for this update request
+        var writeId = new WriteId(this.epoch, this.writeIndex);
         // Implement the quorum protocol. The coordinator asks all the replicas
         // to update
-        multicast(new WriteMsg(msg.v, this.epoch, this.writeIndex));
+        multicast(new WriteMsg(msg.id, writeId, msg.value));
+
+        // Associated this write to the update request that caused it
+        this.writesToUpdates.putIfAbsent(writeId, msg.id);
 
         // Add the new write request to the map, so that the acks can be received
-        var pair = new AbstractMap.SimpleEntry<>(this.epoch, this.writeIndex);
-        this.writeAcksMap.putIfAbsent(pair, new HashSet<>());
-
-        System.out.printf(
-            "[C] Client %s write req to %s for %d in epoch %d with index %d\n",
-            getSender().path().name(),
-            getSelf().path().name(),
-            msg.v,
-            this.epoch,
-            this.writeIndex
-        );
+        this.writeAcksMap.putIfAbsent(writeId, new HashSet<>());
         this.writeIndex++;
     }
     
     private void onWriteAckMsg(WriteAckMsg msg) {
         // If the epoch of the write is not the current epoch, ignore the message
-        if (msg.epoch != this.epoch)
+        if (msg.id.epoch != this.epoch)
             return;
-
-        var pair = new AbstractMap.SimpleEntry<>(msg.epoch, msg.writeIndex);
 
         // The OK has already been sent, as the quorum was reached. Ignore the message from other replicas
-        if (!this.writeAcksMap.containsKey(pair))
+        if (!this.writeAcksMap.containsKey(msg.id)) {
             return;
+        }
 
         // Add the sender to the list
-        this.writeAcksMap.get(pair).add(getSender());
+        this.writeAcksMap.get(msg.id).add(getSender());
 
         // Send all the messages that have been acked in FIFO order!
         sendAllAckedMessages();
@@ -194,8 +241,8 @@ public class Replica extends AbstractActor {
         System.out.printf(
             "[Co] Received ack from %s for %d in epoch %d\n",
             getSender().path().name(),
-            msg.writeIndex,
-            msg.epoch
+            msg.id.index,
+            msg.id.epoch
         );
     }
 
@@ -208,10 +255,11 @@ public class Replica extends AbstractActor {
         // Then, go to the next message (continue until the last write has been reached)
         // If any of the writes didn't reach the quorum, stop!
         while (this.currentWriteToAck < this.writeIndex) {
-            var pair = new AbstractMap.SimpleEntry<>(this.epoch, this.currentWriteToAck);
-            if (this.writeAcksMap.containsKey(pair) && this.writeAcksMap.get(pair).size() >= this.quorum) {
-                multicast(new WriteOkMsg(this.epoch, this.currentWriteToAck));
-                this.writeAcksMap.remove(pair);
+            var writeId = new WriteId(this.epoch, this.currentWriteToAck);
+            var updateRequestId = this.writesToUpdates.get(writeId);
+            if (this.writeAcksMap.containsKey(writeId) && this.writeAcksMap.get(writeId).size() >= this.quorum) {
+                multicast(new WriteOkMsg(writeId, updateRequestId));
+                this.writeAcksMap.remove(writeId);
                 this.currentWriteToAck++;
             } else {
                 break;
@@ -223,19 +271,24 @@ public class Replica extends AbstractActor {
      * The coordinator is requesting to write a new value to the replicas
      */
     private void onWriteMsg(WriteMsg msg) {
+        // Removes this updateRequest from the set of pending ones
+        this.pendingUpdateRequests.remove(msg.updateRequestId);
         // Add the request to the list, so that it is ready if the coordinator requests
         // the update
-        var pair = new AbstractMap.SimpleEntry<>(msg.epoch, msg.writeIndex);
-        this.writeRequests.put(pair, msg.v);
+        this.writeRequests.put(msg.id, msg.v);
         // Send the acknowledgement to the coordinator
-        this.simulateDelay();
-        getSender().tell(new WriteAckMsg(msg.epoch, msg.writeIndex), this.self());
+        this.tellWithDelay(
+            getSender(),
+            new WriteAckMsg(msg.id)
+        );
 
         System.out.printf(
-            "[R] Write requested by the coordinator %s to %s for %d\n",
+            "[R] Write requested by the coordinator %s to %s for %d in epoch %d and index %d\n",
             getSender().path().name(),
             this.getSelf().path().name(),
-            msg.v
+            msg.v,
+            msg.id.epoch,
+            msg.id.index
         );
 
         // The replicas sets a timeout for the expected WriteOk message from
@@ -243,7 +296,7 @@ public class Replica extends AbstractActor {
         getContext().system().scheduler().scheduleOnce(
             Duration.create(WRITEOK_TIMEOUT, TimeUnit.MILLISECONDS),
             getSelf(),
-            new WriteOkReceivedMsg(pair),
+            new WriteOkReceivedMsg(msg.updateRequestId.client, msg.id),
             getContext().system().dispatcher(),
             getSelf()
         );
@@ -258,35 +311,44 @@ public class Replica extends AbstractActor {
      */
     private void onWriteOkMsg(WriteOkMsg msg) {
         // If the epoch of the write is not the current epoch, ignore the message
-        if (msg.epoch != this.epoch)
+        if (msg.id.epoch != this.epoch)
             // Resetting last contact here would be wrong since the received
             // message comes from an already crashed coordinator
             return;
 
         // If the pair epoch-index is not in the map, ignore the message
-        var pair = new AbstractMap.SimpleEntry<>(msg.epoch, msg.writeIndex);
-        if (!this.writeRequests.containsKey(pair))
+        if (!this.writeRequests.containsKey(msg.id))
             return;
 
-        int value = this.writeRequests.remove(pair);
+        int value = this.writeRequests.remove(msg.id);
 
-        // If the last write applied is newer than the current write, ignore the message
-        if (this.lastWrite.epoch > msg.epoch || (
-                this.lastWrite.epoch == msg.epoch &&
-                this.lastWrite.writeIndex > msg.writeIndex
-            )) return;
+        // Checks if this replicas has to inform the original client of the
+        // completed update [Must be done regardless of the subsequent check on
+        // request age to avoid wrong crash detection from the client]
+        if (this.updateRequests.contains(msg.updateRequestId)) {
+            this.updateRequests.remove(msg.updateRequestId);
+            // Sends an ACK back to the client
+            this.tellWithDelay(
+                msg.updateRequestId.client,
+                new UpdateRequestOkMsg(msg.updateRequestId.index)
+            );
+        }
 
-        // Apply the write
-        this.v = value;
-        // Update the last write
-        this.lastWrite = new WriteMsg(this.v, msg.epoch, msg.writeIndex);
+        // If received message is for a write request older then the last served,
+        // ignore it
+        if (msg.id.isPriorOrEqualTo(this.lastWrite)) {
+            return;
+        }
+
+        this.value = value;             // Apply the write
+        this.lastWrite = msg.id;    // Update the last write
 
         System.out.printf(
             "[R] [%s] Applied the write %d in epoch %d with value %d\n",
             this.self().path().name(),
-            msg.writeIndex,
-            msg.epoch,
-            this.v
+            msg.id.index,
+            msg.id.epoch,
+            this.value
         );
 
         this.resetLastContact();
@@ -297,8 +359,7 @@ public class Replica extends AbstractActor {
      */
     private void onReadMsg(ReadMsg msg) {
         ActorRef sender = getSender();
-        this.simulateDelay();
-        sender.tell(new ReadOkMsg(this.v), this.self());
+        this.tellWithDelay(sender, new ReadOkMsg(this.value, msg.id));
 
         System.out.printf(
             "[C] Client %s read req to %s\n",
@@ -318,18 +379,33 @@ public class Replica extends AbstractActor {
     }
 
     private void onWriteMsgReceivedMsg(WriteMsgReceivedMsg msg) {
-        if (!this.writeRequests.containsKey(msg.writeMsg)) {
+        if (
+            //!this.writeRequests.containsKey(msg.writeMsgId) &&
+            //// Checks if last performed write is prior to checked write
+            //// If this check is false it means that the request has already
+            //// been served, thus a WriteMsg was received
+            //this.lastWrite.isPriorOrEqualTo(msg.writeMsgId)
+            this.pendingUpdateRequests.contains(msg.updateRequestId)
+        ) {
             // No WriteMsg received, coordinator crashed
-            this.recordCoordinatorCrash();
+            this.recordCoordinatorCrash(
+                String.format("missed WriteMsg for write req %d from %s",
+                msg.updateRequestId.index,
+                msg.updateRequestId.client.path().name()
+            ));
 
             // TODO: initiate election protocol
         }
     }
 
     private void onWriteOkReceivedMsg(WriteOkReceivedMsg msg) {
-        if (this.writeRequests.containsKey(msg.writeMsg)) {
+        if (this.writeRequests.containsKey(msg.writeMsgId)) {
             // No WriteOk received, coordinator crashed
-            this.recordCoordinatorCrash();
+            this.recordCoordinatorCrash(
+                String.format("missed WriteOk for epoch %d index %d",
+                msg.writeMsgId.epoch,
+                msg.writeMsgId.index
+            ));
 
             // TODO: initiate election protocol
         }
@@ -341,10 +417,14 @@ public class Replica extends AbstractActor {
      */
     private void onHeartbetReceivedMsg(HearbeatReceivedMsg msg) {
         long now = new Date().getTime();
-        if (now - this.lastContact > SEND_HEARTBEAT_TIMEOUT) {
+        long elapsed = now - this.lastContact;
+        if (elapsed > RECEIVE_HEARTBEAT_TIMEOUT) {
             // Too much time has passed since last hearing from the coordinator
             // The coordinator in crashed
-            this.recordCoordinatorCrash();
+            this.recordCoordinatorCrash(
+                String.format("missed HeartbeatMsg: %d elapsed",
+                elapsed
+            ));
 
             // TODO: initiate election protocol
         }
@@ -385,7 +465,7 @@ public class Replica extends AbstractActor {
     /**
      * Auxiliary method for recording the crash of the coordinator.
      */
-    private void recordCoordinatorCrash() {
+    private void recordCoordinatorCrash(String cause) {
         this.crashedReplicas.add(
             this.replicas.get(this.coordinatorIndex)
         );
@@ -394,8 +474,9 @@ public class Replica extends AbstractActor {
         this.heartbeatTimer.cancel();
 
         System.out.printf(
-            "[R] Coordinator crash detected by replica %s\n",
-            getSelf().path().name()
+            "[R] Coordinator crash detected by replica %s on %s\n",
+            getSelf().path().name(),
+            cause
         );
     }
 
