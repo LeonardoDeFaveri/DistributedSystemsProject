@@ -1,25 +1,24 @@
 package it.unitn.ds1;
 
+import akka.actor.AbstractActor;
+import akka.actor.ActorRef;
+import akka.actor.Cancellable;
+import akka.actor.Props;
+import it.unitn.ds1.models.CrashMsg;
+import it.unitn.ds1.models.CrashResponseMsg;
+import it.unitn.ds1.models.StartMsg;
+import scala.concurrent.duration.Duration;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 import java.util.concurrent.TimeUnit;
 
-import akka.actor.AbstractActor;
-import akka.actor.ActorRef;
-import akka.actor.Cancellable;
-import akka.actor.Props;
-import it.unitn.ds1.models.CrashResponseMsg;
-import it.unitn.ds1.models.StartMsg;
-import it.unitn.ds1.models.CrashMsg;
-import scala.concurrent.duration.Duration;
-
 public class CrashManager extends AbstractActor {
     private final ArrayList<ActorRef> replicas;
     private final int quorum;
-
-    private Cancellable crashTimer;
     private final Random numberGenerator;
+    private Cancellable crashTimer;
 
     public CrashManager(List<ActorRef> replicas) {
         this.replicas = new ArrayList<>();
@@ -28,9 +27,9 @@ public class CrashManager extends AbstractActor {
         this.numberGenerator = new Random(System.nanoTime());
 
         System.out.printf(
-            "[CM] Crash manager %s created with a quorum of %d\n",
-            getSelf().path().name(),
-            this.quorum
+                "[CM] Crash manager %s created with a quorum of %d\n",
+                getSelf().path().name(),
+                this.quorum
         );
     }
 
@@ -53,12 +52,12 @@ public class CrashManager extends AbstractActor {
             // Periodically sends a crash message to self and then redirect it
             // to a random replica
             this.crashTimer = getContext().system().scheduler().scheduleWithFixedDelay(
-                Duration.create(1, TimeUnit.SECONDS), // when to start generating messages
-                Duration.create(2, TimeUnit.SECONDS), // how frequently generate them
-                getSelf(), // destination actor reference
-                new CrashMsg(), // the message to send
-                getContext().system().dispatcher(), // system dispatcher
-                getSelf() // source of the message (myself)
+                    Duration.create(1, TimeUnit.SECONDS), // when to start generating messages
+                    Duration.create(2, TimeUnit.SECONDS), // how frequently generate them
+                    getSelf(), // destination actor reference
+                    new CrashMsg(), // the message to send
+                    getContext().system().dispatcher(), // system dispatcher
+                    getSelf() // source of the message (myself)
             );
         }
     }
@@ -71,8 +70,8 @@ public class CrashManager extends AbstractActor {
         ActorRef replica = this.getReplica();
 
         System.out.printf(
-            "[CM] CrashManager sent crash message to %s\n",
-            replica.path().name()
+                "[CM] CrashManager sent crash message to %s\n",
+                replica.path().name()
         );
         replica.tell(msg, getSelf());
     }
@@ -102,5 +101,5 @@ public class CrashManager extends AbstractActor {
                 .match(CrashResponseMsg.class, this::onCrashResponseMsg)
                 .build();
     }
-    
+
 }

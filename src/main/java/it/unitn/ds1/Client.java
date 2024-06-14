@@ -10,15 +10,13 @@ import akka.actor.AbstractActor;
 import akka.actor.ActorRef;
 import akka.actor.Cancellable;
 import akka.actor.Props;
-import it.unitn.ds1.models.ReadMsg;
-import it.unitn.ds1.models.ReadOkMsg;
-import it.unitn.ds1.models.StartMsg;
-import it.unitn.ds1.models.StopMsg;
-import it.unitn.ds1.models.UpdateRequestMsg;
-import it.unitn.ds1.models.UpdateRequestOkMsg;
-import it.unitn.ds1.models.crash_detection.ReadOkReceivedMsg;
-import it.unitn.ds1.models.crash_detection.UpdateRequestOkReceivedMsg;
+
+import it.unitn.ds1.models.*;
 import scala.concurrent.duration.Duration;
+
+import java.util.ArrayList;
+import java.util.Random;
+import java.util.concurrent.TimeUnit;
 
 public class Client extends AbstractActor {
     // Maximum value to be generated for update messages
@@ -30,7 +28,9 @@ public class Client extends AbstractActor {
     private final long UPDATE_REQUEST_OK_TIMEOUT;
 
     private final ArrayList<ActorRef> replicas; // All replicas in the system
+    private final Random numberGenerator;
     private int v; // Last read value
+
     private int readIndex;
     private int writeIndex;
     // These two sets are used to track requests sent and waiting for ACK
@@ -98,7 +98,7 @@ public class Client extends AbstractActor {
                 getContext().system().dispatcher(),
                 getSelf());
     }
-    
+
     private void onStopMsg(StopMsg msg) {
         System.out.printf("[C] Client %s stopped\n", getSelf().path().name());
         if (this.readTimer != null) {
@@ -161,9 +161,9 @@ public class Client extends AbstractActor {
         this.v = msg.v;
         this.readMsgs.remove(msg.id);
         System.out.printf(
-            "[C] Client %s read done %d\n",
-            getSelf().path().name(),
-           this. v
+                "[C] Client %s read done %d\n",
+                getSelf().path().name(),
+                this.v
         );
     }
 

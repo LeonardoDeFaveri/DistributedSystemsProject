@@ -21,7 +21,7 @@ public class Broadcaster {
 
         for (int i = 0; i < N_REPLICAS; i++) {
             // Initially the coordinator is the first created replica
-            replicas.add(system.actorOf(Replica.props(0, 0), "replica" + i));
+            replicas.add(system.actorOf(Replica.props(i, 0, 0), "replica" + i));
         }
 
         for (ActorRef replica : replicas) {
