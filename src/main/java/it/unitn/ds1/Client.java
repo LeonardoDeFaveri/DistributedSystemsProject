@@ -47,6 +47,14 @@ public class Client extends AbstractActor {
         this.numberGenerator = new Random(System.nanoTime());
 
         // Sets timeout to maximum delay
+        // The intuition is that if each message takes up to `Replica.Delay` to
+        // be sent, on an update request we pay this delay on:
+        // - forwarding of request from replica to coordinator
+        // - broadcasting of WriteMsg
+        // - sending of ACK
+        // Then, once enough ACS have been received we pay againg for
+        // - sending of WriteOk
+        // - sending of UpdateRequestOk from replica to client
         this.UPDATE_REQUEST_OK_TIMEOUT =
             Replica.DELAY * 3 + Replica.DELAY * 2 * this.replicas.size() +
             Replica.DELAY * 5; // For additional safety;
@@ -62,7 +70,7 @@ public class Client extends AbstractActor {
      * Return the replica to be contacted. Is randomly chosen each time.
      * @return replica to be contacted
      */
-    private ActorRef getReplica() {
+    private ActorRef getRandomReplica() {
         int index = this.numberGenerator.nextInt(1, this.replicas.size());
         return this.replicas.get(index);
     }
@@ -108,7 +116,7 @@ public class Client extends AbstractActor {
     }
 
     private void onReadMsg(ReadMsg msg) {
-        ActorRef replica = this.getReplica();
+        ActorRef replica = this.getRandomReplica();
         ReadMsg readMessage = new ReadMsg(getSender(), this.readIndex++);
         this.readMsgs.putIfAbsent(readMessage.id, replica);
         replica.tell(readMessage, getSelf());
@@ -123,7 +131,7 @@ public class Client extends AbstractActor {
     }
 
     private void onUpdateRequestMsg(UpdateRequestMsg msg) {
-        ActorRef replica = this.getReplica();
+        ActorRef replica = this.getRandomReplica();
         UpdateRequestMsg updateRequest = new UpdateRequestMsg(
             getSelf(),
             this.numberGenerator.nextInt(MAX_INT),
