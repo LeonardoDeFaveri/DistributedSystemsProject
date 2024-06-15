@@ -12,11 +12,8 @@ import akka.actor.Cancellable;
 import akka.actor.Props;
 
 import it.unitn.ds1.models.*;
+import it.unitn.ds1.models.crash_detection.*;
 import scala.concurrent.duration.Duration;
-
-import java.util.ArrayList;
-import java.util.Random;
-import java.util.concurrent.TimeUnit;
 
 public class Client extends AbstractActor {
     // Maximum value to be generated for update messages
@@ -36,8 +33,6 @@ public class Client extends AbstractActor {
     // These two sets are used to track requests sent and waiting for ACK
     private final Map<Integer, ActorRef> readMsgs;
     private final Map<Integer, ActorRef> writeMsgs;
-
-    private final Random numberGenerator;
 
     private Cancellable readTimer;
     private Cancellable writeTimer;

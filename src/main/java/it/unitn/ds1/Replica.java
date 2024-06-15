@@ -17,13 +17,12 @@ import akka.actor.Cancellable;
 import akka.actor.Props;
 
 import it.unitn.ds1.models.*;
+import it.unitn.ds1.models.crash_detection.*;
 import it.unitn.ds1.utils.UpdateRequestId;
 import it.unitn.ds1.utils.WriteId;
 import scala.concurrent.duration.Duration;
 
-import java.io.Serializable;
 import java.util.*;
-import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 public class Replica extends AbstractActor {
@@ -36,10 +35,6 @@ public class Replica extends AbstractActor {
 
     private final List<ActorRef> replicas; // List of all replicas in the system
     private final Set<ActorRef> crashedReplicas; // Set of crashed replicas
-    // The number of  write acks received for each write
-    private final Map<Map.Entry<Integer, Integer>, Set<ActorRef>> writeAcksMap = new HashMap<>();
-    // The write requests the replica has received from the coordinator, the value is the new value to write
-    private final Map<Map.Entry<Integer, Integer>, Integer> writeRequests = new HashMap<>();
     private final Random numberGenerator;
     private final int replicaID;
     private int coordinatorIndex; // Index of the coordinator replica inside `replicas`
@@ -70,8 +65,6 @@ public class Replica extends AbstractActor {
 
     private int currentWriteToAck = 0; // The write we are currently collecting ACKs for.
 
-    private final Random numberGenerator; // Generator for delays
-
     // For the coordinator: periodically sends heartbeat messages to
     // replicas
     // For replicas: periodically sends heartbeat received messages
@@ -84,7 +77,7 @@ public class Replica extends AbstractActor {
     private ElectionMsg.LastUpdate lastUpdateApplied; // Last write applied by the replica
 
     public Replica(int replicaID, int value, int coordinatorIndex) {
-        System.out.printf("[R] Replica %s created with value %d\n", getSelf().path().name(), v);
+        System.out.printf("[R] Replica %s created with value %d\n", getSelf().path().name(), value);
         this.replicas = new ArrayList<>();
         this.crashedReplicas = new HashSet<>();
         this.coordinatorIndex = coordinatorIndex;
@@ -161,29 +154,30 @@ public class Replica extends AbstractActor {
         }
     }
   
-    /**
-     * Overload of sendDelayed, with a random delay up to 100ms
-     */
-    private void sendDelayed(Serializable msg, ActorRef receiver) {
-        int delay = this.numberGenerator.nextInt(100);
-        sendDelayed(msg, receiver, delay);
-    }
-
-    /**
-     * Send a delayed message to a replica
-     * @param msg The message to send
-     * @param receiver The replica to send the message to
-     * @param delay The delay in milliseconds
-     */
-    private void sendDelayed(Serializable msg, ActorRef receiver, int delay) {
-        getContext().system().scheduler().scheduleOnce(
-                Duration.create(delay, TimeUnit.MILLISECONDS), // delay
-                receiver, // Receiver
-                msg, // Message to send
-                getContext().system().dispatcher(), // Executor
-                getSelf() // Sender
-        );
-    }
+    
+    ///**
+    // * Overload of sendDelayed, with a random delay up to 100ms
+    // */
+    //private void sendDelayed(Serializable msg, ActorRef receiver) {
+    //    int delay = this.numberGenerator.nextInt(100);
+    //    sendDelayed(msg, receiver, delay);
+    //}
+    //
+    ///**
+    // * Send a delayed message to a replica
+    // * @param msg The message to send
+    // * @param receiver The replica to send the message to
+    // * @param delay The delay in milliseconds
+    // */
+    //private void sendDelayed(Serializable msg, ActorRef receiver, int delay) {
+    //    getContext().system().scheduler().scheduleOnce(
+    //            Duration.create(delay, TimeUnit.MILLISECONDS), // delay
+    //            receiver, // Receiver
+    //            msg, // Message to send
+    //            getContext().system().dispatcher(), // Executor
+    //            getSelf() // Sender
+    //    );
+    //}
 
     private void multicast(Serializable msg) {
         multicast(msg, false);
@@ -198,7 +192,8 @@ public class Replica extends AbstractActor {
         var replicas = this.replicas.stream().filter(r -> !excludeItself || r != this.getSelf()).toList();
 
         for (ActorRef replica : replicas) {
-            sendDelayed(msg, replica);
+            //sendDelayed(msg, replica);
+            this.tellWithDelay(replica, msg);
         }
     }
 
@@ -246,7 +241,7 @@ public class Replica extends AbstractActor {
                 this.writeIndex
             );
 
-            //this.writeIndex++;
+            this.writeIndex++;
             return;
         }
 
@@ -316,7 +311,6 @@ public class Replica extends AbstractActor {
      * The coordinator is requesting to write a new value to the replicas
      */
     private void onWriteMsg(WriteMsg msg) {
-        this.writeIndex++;
         // Removes this updateRequest from the set of pending ones
         this.pendingUpdateRequests.remove(msg.updateRequestId);
         // Add the request to the list, so that it is ready if the coordinator requests
@@ -339,10 +333,14 @@ public class Replica extends AbstractActor {
 
         // The replicas sets a timeout for the expected WriteOk message from
         // the coordinator
+        ActorRef client = null;
+        if (msg.updateRequestId != null) {
+            client = msg.updateRequestId.client;
+        }
         getContext().system().scheduler().scheduleOnce(
             Duration.create(WRITEOK_TIMEOUT, TimeUnit.MILLISECONDS),
             getSelf(),
-            new WriteOkReceivedMsg(msg.updateRequestId.client, msg.id),
+            new WriteOkReceivedMsg(client, msg.id),
             getContext().system().dispatcher(),
             getSelf()
         );
@@ -540,12 +538,14 @@ public class Replica extends AbstractActor {
             var lastUpdate = entry.getValue();
             var missedUpdatesList = new ArrayList<WriteMsg>();
             for (int i = lastUpdate.writeIndex + 1; i < this.lastUpdateApplied.writeIndex + 1; i++) {
-                var ithRequest = this.writeRequests.get(new AbstractMap.SimpleEntry<>(this.epoch, i));
-                missedUpdatesList.add(new WriteMsg(ithRequest, this.epoch, i));
+                var writeId = new WriteId(this.epoch, i);
+                var ithRequest = this.writeRequests.get(writeId);
+                missedUpdatesList.add(new WriteMsg(null, writeId, ithRequest));
+                //missedUpdatesList.add(new WriteMsg(ithRequest, this.epoch, i));
             }
             if (missedUpdatesList.isEmpty())
                 continue;
-            sendDelayed(new LostUpdatesMsg(missedUpdatesList), replica);
+            this.tellWithDelay(replica, new LostUpdatesMsg(missedUpdatesList));
         }
     }
 
@@ -553,11 +553,11 @@ public class Replica extends AbstractActor {
      * The replica has received the lost updates from the coordinator, so it can apply them
      */
     private void onLostUpdatesMsg(LostUpdatesMsg msg) {
-        System.out.printf("[R%d] received %d missed updates, last update: (%d, %d), new updates received: %s%n",
+        System.out.printf("[R%d] received %d missed updates, last update: (%d, %d), new updates received: %s\n",
                 this.replicaID, msg.missedUpdates.size(), lastUpdateApplied.epoch, lastUpdateApplied.writeIndex,
-                msg.missedUpdates.stream().map(update -> String.format("(%d, %d)", update.epoch, update.writeIndex)).collect(Collectors.toList()));
+                msg.missedUpdates.stream().map(update -> String.format("(%d, %d)", update.id.epoch, update.id.index)).collect(Collectors.toList()));
         for (var update : msg.missedUpdates) {
-            this.v = update.v;
+            this.value = update.v;
         }
     }
 
