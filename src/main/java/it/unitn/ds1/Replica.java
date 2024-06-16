@@ -18,6 +18,7 @@ import akka.actor.Props;
 
 import it.unitn.ds1.models.*;
 import it.unitn.ds1.models.crash_detection.*;
+import it.unitn.ds1.utils.Delays;
 import it.unitn.ds1.utils.UpdateRequestId;
 import it.unitn.ds1.utils.WriteId;
 import scala.concurrent.duration.Duration;
@@ -26,54 +27,91 @@ import java.util.stream.Collectors;
 
 public class Replica extends AbstractActor {
     static final int CRASH_CHANCES = 100;
-    static final int DELAY = 100;
-    static final long WRITEOK_TIMEOUT = 3000;
-    static final long WRITEMSG_TIMEOUT = 3000;
-    static final long SEND_HEARTBEAT_TIMEOUT = 50;
-    static final long RECEIVE_HEARTBEAT_TIMEOUT = 300;
 
-    private final List<ActorRef> replicas; // List of all replicas in the system
-    private final Set<ActorRef> crashedReplicas; // Set of crashed replicas
-    private final Random numberGenerator;
+    /**
+     * All replicas in the system, whether they're active or not.
+     */
+    private final List<ActorRef> replicas;
+    /**
+     * Set of replicas that have been detected as crashed.
+     */
+    private final Set<ActorRef> crashedReplicas;
     private final int replicaID;
-    private int coordinatorIndex; // Index of the coordinator replica inside `replicas`
+    /**
+     * Index of the coordinator replica inside `replicas`
+     */
+    private int coordinatorIndex;
     private boolean isCoordinator;
   
-    private int value; // The value of the replica
-    private int quorum = 0; // The number of nodes that must agree on a write
-    private int epoch; // The current epoch
-    private int writeIndex; // The index of the last write operation
+    private int quorum = 0; // Minimum number of nodes that must agree on a Write
+    private int value;      // Current value of the replica
+    private int epoch;      // Crrent epoch
+    /**
+     * The index of the last write operation
+     */
+    private int writeIndex;
 
-    // The last write operation, to prevent an old write to be applied after a new one
+    //=== UPDATE PROTOCOL ======================================================
+    /**
+     * This is the ID of the last write that was applied. It's necessary to
+     * prevent older writes to be applied after newer ones.
+     */
     private WriteId lastWrite = new WriteId(0, -1);
-
-    private final Set<UpdateRequestId> pendingUpdateRequests;
-
-    // The number of write acks received for each write
+    /**
+     * For each Write collects ACKs from replicas.
+     */
     private final Map<WriteId, Set<ActorRef>> writeAcksMap;
-
-    // The write requests the replica has received from the coordinator, the value is the new value to write
+    /**
+     * Maps the ID of each WriteMsg received to the value that should be written.
+     */
     private final Map<WriteId, Integer> writeRequests;
-    
-    // Maps each write request to the updateRequest that initiated it
+    /**
+     * Index of thhe write we are currently collecting ACKs for.
+     */
+    private int currentWriteToAck = 0;
+
+    //=== ELECTION PROTOCOL ====================================================
+    /**
+     * For each replica keeps track of its last applied write. ReplicaIDs are
+     * used as keys and values are pairs `(epoch, writeIndex)`.
+     */
+    private Map<Integer, ElectionMsg.LastUpdate> lastUpdateForReplica;
+    /**
+     * Last write applied by this replica.
+     */
+    private ElectionMsg.LastUpdate lastUpdateApplied;
+
+    //=== CRASH DETECTION ======================================================
+    /**
+     * For the coordinator: periodically sends heartbeat messages to
+     * replicas.
+     * For replicas: periodically sends heartbeat received messages
+     * to themselves.
+     */
+    private Cancellable heartbeatTimer;
+    /**
+     * Timestamp of last time the replica received something from the coordinator.
+     */
+    private long lastContact;
+    /**
+     * For each UpdateRequestMsg received by a client, the ID is stored up
+     * until the associated WriteMsg is received.
+     */
+    private final Set<UpdateRequestId> pendingUpdateRequests;
+    /**
+     * Maps the ID of each WriteMsg to the ID of the UpdateRequestMsg that
+     * caused it.
+     */
     private final Map<WriteId, UpdateRequestId> writesToUpdates;
 
-    // Uses <clientRef, updateIndex> to keep track for those update request received
-    // by a client that will need to be ACKed back
+    /**
+     * Collects all the update requests received by clients so that they can
+     * be later ACKed when the request has been succesfully served.
+     */
     private final Set<UpdateRequestId> updateRequests;
 
-    private int currentWriteToAck = 0; // The write we are currently collecting ACKs for.
-
-    // For the coordinator: periodically sends heartbeat messages to
-    // replicas
-    // For replicas: periodically sends heartbeat received messages
-    // to themselves
-    private Cancellable heartbeatTimer;
-    private long lastContact;
-
-    // The last update received from each replica. The key is the replicaID, the value is the last update (epoch, writeIndex)
-    private Map<Integer, ElectionMsg.LastUpdate> lastUpdateForReplica;
-    private ElectionMsg.LastUpdate lastUpdateApplied; // Last write applied by the replica
+    //=== OTHERS ===============================================================
+    private final Random numberGenerator;
 
     public Replica(int replicaID, int value, int coordinatorIndex) {
         System.out.printf("[R] Replica %s created with value %d\n", getSelf().path().name(), value);
@@ -96,16 +134,20 @@ public class Replica extends AbstractActor {
     }
 
     public static Props props(int replicaID, int v, int coordinatorIndex) {
-        return Props.create(Replica.class, () -> new Replica(replicaID, v, coordinatorIndex));
+        return Props.create(
+            Replica.class,
+            () -> new Replica(replicaID, v, coordinatorIndex)
+        );
     }
 
+    //=== Utility methods ======================================================
     /**
      * Sends `msg` to `receiver` with a random delay of `[0, DELAY)`ms.
      * @param receiver receiver of the message
      * @param msg message to send
      */
     private void tellWithDelay(ActorRef receiver, Serializable msg) {
-        int delay = this.numberGenerator.nextInt(0, DELAY);
+        int delay = this.numberGenerator.nextInt(0, Delays.MAX_DELAY);
         getContext().system().scheduler().scheduleOnce(
             Duration.create(delay, TimeUnit.MILLISECONDS),
             receiver,
@@ -115,46 +157,6 @@ public class Replica extends AbstractActor {
         );
     }
 
-    // -------------------------------------------------------------------------
-
-    private void onJoinGroupMsg(JoinGroupMsg msg) {
-        this.replicas.addAll(msg.replicas);
-        this.quorum = (this.replicas.size() / 2); // ! No + 1, because one is itself
-
-        this.isCoordinator = this.replicas.indexOf(this.getSelf()) == this.coordinatorIndex;
-        if (this.isCoordinator) {
-            getContext().become(createCoordinator());
-        }
-    }
-
-    private void onStartMsg(StartMsg msg) {
-        if (this.isCoordinator) {
-            // Begin sending heartbeat messages to replicas
-            this.heartbeatTimer = getContext().system().scheduler().scheduleWithFixedDelay(
-                Duration.create(0, TimeUnit.SECONDS), // when to start generating messages
-                Duration.create(SEND_HEARTBEAT_TIMEOUT, TimeUnit.MILLISECONDS), // how frequently generate them
-                getSelf(), // All replicas
-                new HeartbeatMsg(), // the message to send
-                getContext().system().dispatcher(), // system dispatcher
-                getSelf() // source of the message (myself)
-            );
-            System.out.printf("[Co] Coordinator %s started\n", getSelf().path().name());
-        } else {
-            // Begins sending heartbeat to self
-            this.heartbeatTimer = getContext().system().scheduler().scheduleWithFixedDelay(
-                Duration.create(1, TimeUnit.SECONDS),
-                Duration.create(RECEIVE_HEARTBEAT_TIMEOUT, TimeUnit.MILLISECONDS),
-                getSelf(),
-                new HearbeatReceivedMsg(),
-                getContext().system().dispatcher(),
-                getSelf()
-            );
-            this.resetLastContact();
-            System.out.printf("[R] Replica %s started\n", getSelf().path().name());
-        }
-    }
-  
-    
     ///**
     // * Overload of sendDelayed, with a random delay up to 100ms
     // */
@@ -179,23 +181,74 @@ public class Replica extends AbstractActor {
     //    );
     //}
 
+    /**
+     * Multicasts a message to all replicas including itself.
+     * @param msg The message to send
+     */
     private void multicast(Serializable msg) {
         multicast(msg, false);
     }
 
     /**
-     * Multicasts a message to all replicas
+     * Multicasts a message to all replicas, possibly excluding itself.
      * @param msg The message to send
-     * @param excludeItself Whether the replica should exclude itself from the multicast
+     * @param excludeItself Whether the replica should exclude itself from
+     * the multicast or not
      */
     private void multicast(Serializable msg, boolean excludeItself) {
-        var replicas = this.replicas.stream().filter(r -> !excludeItself || r != this.getSelf()).toList();
+        var replicas = this.replicas.stream().filter(
+            r -> !excludeItself || r != this.getSelf()
+        ).toList();
 
         for (ActorRef replica : replicas) {
             this.tellWithDelay(replica, msg);
         }
     }
 
+    //=== HANDLERS FOR INITIATION AND TERMINATION MESSAGES =====================
+    private void onJoinGroupMsg(JoinGroupMsg msg) {
+        this.replicas.addAll(msg.replicas);
+        this.quorum = (this.replicas.size() / 2); // ! No + 1, because one is itself
+
+        this.isCoordinator = this.replicas.indexOf(this.getSelf()) == this.coordinatorIndex;
+        if (this.isCoordinator) {
+            getContext().become(createCoordinator());
+        }
+    }
+
+    /**
+     * When a `StartMsg` is received:
+     * - Coordinator starts sending `HeartbeatMsg`s to replicas;
+     * - Replicas starts checking for the liveness of the coordinator;
+     */
+    private void onStartMsg(StartMsg msg) {
+        if (this.isCoordinator) {
+            // Begin sending heartbeat messages to replicas
+            this.heartbeatTimer = getContext().system().scheduler().scheduleWithFixedDelay(
+                Duration.create(0, TimeUnit.SECONDS),
+                Duration.create(Delays.SEND_HEARTBEAT_TIMEOUT, TimeUnit.MILLISECONDS),
+                getSelf(),
+                new HeartbeatMsg(),
+                getContext().system().dispatcher(),
+                getSelf()
+            );
+            System.out.printf("[Co] Coordinator %s started\n", getSelf().path().name());
+        } else {
+            // Begins sending heartbeat to self
+            this.heartbeatTimer = getContext().system().scheduler().scheduleWithFixedDelay(
+                Duration.create(1, TimeUnit.SECONDS),
+                Duration.create(Delays.RECEIVE_HEARTBEAT_TIMEOUT, TimeUnit.MILLISECONDS),
+                getSelf(),
+                new HearbeatReceivedMsg(),
+                getContext().system().dispatcher(),
+                getSelf()
+            );
+            this.resetLastContact();
+            System.out.printf("[R] Replica %s started\n", getSelf().path().name());
+        }
+    }
+
+    //=== HANDLERS FOR UPDATE REQUESTS RELATED MESSAGES ========================
     /**
      * When a client sends a request to update the value of the replica
      */
@@ -224,7 +277,7 @@ public class Replica extends AbstractActor {
             this.pendingUpdateRequests.add(msg.id);
             // Sets a timeout for the broadcast from the coordinator
             getContext().system().scheduler().scheduleOnce(
-                Duration.create(WRITEMSG_TIMEOUT, TimeUnit.MILLISECONDS),
+                Duration.create(Delays.WRITEMSG_TIMEOUT, TimeUnit.MILLISECONDS),
                 getSelf(),
                 new WriteMsgReceivedMsg(msg.id),
                 getContext().system().dispatcher(),
@@ -266,7 +319,8 @@ public class Replica extends AbstractActor {
         if (msg.id.epoch != this.epoch)
             return;
 
-        // The OK has already been sent, as the quorum was reached. Ignore the message from other replicas
+        // The OK has already been sent, as the quorum was reached.
+        // ACKs from other replicas for the same write should be ignored.
         if (!this.writeAcksMap.containsKey(msg.id)) {
             return;
         }
@@ -290,8 +344,9 @@ public class Replica extends AbstractActor {
      * When the message is sent to the replicas, serve all the successive messages
      */
     private void sendAllAckedMessages() {
-        // Starting from the first message to send, if the quorum has been reached, send the message
-        // Then, go to the next message (continue until the last write has been reached)
+        // Starting from the first message to send, if the quorum has been reached,
+        // send the message. Then, go to the next message (continue until the
+        // last write has been reached).
         // If any of the writes didn't reach the quorum, stop!
         while (this.currentWriteToAck < this.writeIndex) {
             var writeId = new WriteId(this.epoch, this.currentWriteToAck);
@@ -312,9 +367,9 @@ public class Replica extends AbstractActor {
     private void onWriteMsg(WriteMsg msg) {
         // Removes this updateRequest from the set of pending ones
         this.pendingUpdateRequests.remove(msg.updateRequestId);
-        // Add the request to the list, so that it is ready if the coordinator requests
-        // the update
-        this.writeRequests.put(msg.id, msg.v);
+        // Add the request to the list, so that it is ready if the coordinator
+        // requests the update
+        this.writeRequests.put(msg.id, msg.value);
         // Send the acknowledgement to the coordinator
         this.tellWithDelay(
             getSender(),
@@ -325,7 +380,7 @@ public class Replica extends AbstractActor {
             "[R] Write requested by the coordinator %s to %s for %d in epoch %d and index %d\n",
             getSender().path().name(),
             this.getSelf().path().name(),
-            msg.v,
+            msg.value,
             msg.id.epoch,
             msg.id.index
         );
@@ -337,7 +392,7 @@ public class Replica extends AbstractActor {
             client = msg.updateRequestId.client;
         }
         getContext().system().scheduler().scheduleOnce(
-            Duration.create(WRITEOK_TIMEOUT, TimeUnit.MILLISECONDS),
+            Duration.create(Delays.WRITEOK_TIMEOUT, TimeUnit.MILLISECONDS),
             getSelf(),
             new WriteOkReceivedMsg(client, msg.id),
             getContext().system().dispatcher(),
@@ -399,6 +454,7 @@ public class Replica extends AbstractActor {
         this.resetLastContact();
     }
 
+    //=== HANDLERS FOR READ REQUEST RELATED MESSAGES ===========================
     /**
      * The client is requesting to read the value of the replica
      */
@@ -413,10 +469,7 @@ public class Replica extends AbstractActor {
         );
     }
 
-    /**
-     * Election behaviour
-     */
-
+    //=== METHODS AND HANDLERS FOR THE ELECTION PROTOCOL =======================
     /**
      * When the coordinator changes, the epoch is increased and writes starts
      * again from 0.
@@ -427,7 +480,8 @@ public class Replica extends AbstractActor {
     }
 
     /**
-     * Returns the next node on the ring (the next based on index may have crashed, check!)
+     * Returns the next node on the ring (the next based on index may have
+     * crashed, check!).
      *
      * @return The next node on the ring
      */
@@ -438,7 +492,7 @@ public class Replica extends AbstractActor {
     }
 
     /**
-     * Send an election message to the next node
+     * Sends an `ElectionMsg` to the next node.
      */
     public void sendElectionMessage() {
         var nextNode = this.getNextNode();
@@ -448,13 +502,13 @@ public class Replica extends AbstractActor {
     }
 
     /**
-     * When an Election message is received:
-     * - If the message already contains this replicaID, then change the type to Coordinator, and set the coordinatorID
-     * to the node which is the most updated in the list (highest epoch and writeIndex), and take the node with the
-     * highest ID in case of a tie
-     * - Otherwise, add the replicaID of this node + the last update to the list, then propagate to the next node
-     *
-     * @param msg The message received
+     * When an `ElectionMsg` is received:
+     * - If the message already contains this replicaID, then change the type to
+     * Coordinator, and set the coordinatorID to the node which is the most
+     * updated in the list (highest epoch and writeIndex), and take the node with
+     * the highest ID in case of a tie;
+     * - Otherwise, add the replicaID of this node + the last update to the list,
+     * then propagate to the next node;
      */
     private void onElectionMsg(ElectionMsg msg) {
         System.out.printf(
@@ -472,14 +526,19 @@ public class Replica extends AbstractActor {
                 ).collect(Collectors.joining(", ")
             )
         );
-        // When a node receives the election message, and the message already contains the node's ID,
-        // then change the message type to COORDINATOR.
-        // THe new leader is the node with the latest update (highest epoch, writeIndex), and highest replicaID
+        // When a node receives the election message, and the message already
+        // contains the node's ID, then change the message type to COORDINATOR.
+        // The new leader is the node with the latest update
+        // (highest epoch, writeIndex), and highest replicaID.
         if (msg.participants.containsKey(this.replicaID)) {
             var mostUpdated = msg.participants.entrySet().stream().reduce(Utils::getNewCoordinatorIndex);
             this.coordinatorIndex = mostUpdated.get().getKey();
 
-            System.out.println("[R:" + this.replicaID + "] New coordinator found: " + this.coordinatorIndex);
+            System.out.printf(
+                "[R: %d] New coordinator found: %d\n",
+                this.replicaID,
+                this.coordinatorIndex
+            );
             if (this.coordinatorIndex == this.replicaID) {
                 this.lastUpdateForReplica = msg.participants;
                 sendSynchronizationMessage();
@@ -487,10 +546,14 @@ public class Replica extends AbstractActor {
                 this.onCoordinatorChange();
                 return;
             }
-            getNextNode().tell(new CoordinatorMsg(this.coordinatorIndex, this.replicaID, msg.participants), getSelf());
+            getNextNode().tell(
+                new CoordinatorMsg(this.coordinatorIndex, this.replicaID, msg.participants),
+                getSelf()
+            );
             return;
         }
-        // If it's an election message, and my ID is not in the list, add it and propagate to the next node
+        // If it's an election message, and my ID is not in the list, add it and
+        // propagate to the next node.
         // writeIndex - 1 because we are incrementing the update after we receive it
         msg.participants.put(this.replicaID, this.lastUpdateApplied);
 
@@ -499,11 +562,13 @@ public class Replica extends AbstractActor {
     }
 
     /**
-     * The Election message has been received by all the nodes, and the coordinator has been elected.
-     * The coordinator sends a message to all the nodes to synchronize the epoch and the writeIndex
+     * The Election message has been received by all the nodes, and the
+     * coordinator has been elected. The coordinator sends a message to all the
+     * nodes to synchronize the epoch and the writeIndex.
      */
     private void onCoordinatorMsg(CoordinatorMsg msg) {
-        // The replica is the sender of the message, it already has the coordinator index
+        // The replica is the sender of the message, so it already has the
+        // coordinator index
         if (msg.senderID == this.replicaID)
             return;
         // This replica is the new coordinator
@@ -523,7 +588,8 @@ public class Replica extends AbstractActor {
     }
 
     /**
-     * The new coordinator has sent the synchronization message, so the replicas can update their epoch and writeIndex
+     * The new coordinator has sent the synchronization message, so the replicas
+     * can update their epoch and writeIndex.
      */
     private void onSynchronizationMsg(SynchronizationMsg msg) {
         this.coordinatorIndex = this.replicas.indexOf(getSender());
@@ -541,14 +607,15 @@ public class Replica extends AbstractActor {
     }
 
     /**
-     * Send the synchronization message to all nodes
+     * Send the synchronization message to all nodes.
      */
     private void sendSynchronizationMessage() {
         multicast(new SynchronizationMsg());
     }
 
     /**
-     * The coordinator, which is the one with the most recent updates, sends all the missed updates to each replica.
+     * The coordinator, which is the one with the most recent updates, sends all
+     * the missed updates to each replica.
      */
     private void sendLostUpdates() {
         for (var entry : this.lastUpdateForReplica.entrySet()) {
@@ -567,7 +634,8 @@ public class Replica extends AbstractActor {
     }
 
     /**
-     * The replica has received the lost updates from the coordinator, so it can apply them
+     * The replica has received the lost updates from the coordinator, so it can
+     * apply them.
      */
     private void onLostUpdatesMsg(LostUpdatesMsg msg) {
         System.out.printf(
@@ -583,19 +651,52 @@ public class Replica extends AbstractActor {
         );
 
         for (var update : msg.missedUpdates) {
-            this.value = update.v;
+            this.value = update.value;
+        }
+    }
+
+    //=== HANDLERS FOR CRASH DETECTION MESSAGES ================================
+    /**
+     * When a `CrashMsg` is received there's cercain chance of actually crashing.
+     */
+    private void onCrashMsg(CrashMsg msg) {
+        int chance = this.numberGenerator.nextInt(CRASH_CHANCES);
+
+        // Each replica has a 10% chance of crashing
+        if (chance >= 10) {
+            getSender().tell(new CrashResponseMsg(false), getSelf());
+
+            System.out.printf(
+                    "[R] Replica %s received crash message and DIDN'T CRASH\n",
+                    getSelf().path().name()
+            );
+        } else {
+            getSender().tell(new CrashResponseMsg(true), getSelf());
+            // The replica has crashed and will not respond to messages anymore
+            getContext().become(createCrashed());
+            // Stop sending heartbeat messages
+            this.heartbeatTimer.cancel();
+
+            System.out.printf(
+                    "[R] Replica %s received crash message and CRASHED\n",
+                    getSelf().path().name()
+            );
         }
     }
 
     /**
-     * Crash detection
+     * When a `HeartbeatMsg` is received:
+     * - Coordinator multicasts it to all replicas;
+     * - Replicas reset they're time of last contact from the coordinator;
+     * @param msg
      */
-
     private void onHeartbeatMsg(HeartbeatMsg msg) {
         if (this.isCoordinator) {
             // Sends an heartbeat to all replicas signaling that it's still
-            // alive
-            this.multicast(msg);
+            // alive.
+            // The coordinator should not send it to itself otherwise it would
+            // keeps sending them infinitely.
+            this.multicast(msg, true);
         } else {
             // Since a replica has received a heartbeat it knows the coordinator
             // is still alive
@@ -639,38 +740,13 @@ public class Replica extends AbstractActor {
     private void onHeartbetReceivedMsg(HearbeatReceivedMsg msg) {
         long now = new Date().getTime();
         long elapsed = now - this.lastContact;
-        if (elapsed > RECEIVE_HEARTBEAT_TIMEOUT) {
+        if (elapsed > Delays.RECEIVE_HEARTBEAT_TIMEOUT) {
             // Too much time has passed since last hearing from the coordinator
             // The coordinator in crashed
             this.recordCoordinatorCrash(
                 String.format("missed HeartbeatMsg: %d elapsed",
                 elapsed
             ));
-        }
-    }
-
-    private void onCrashMsg(CrashMsg msg) {
-        int chance = this.numberGenerator.nextInt(CRASH_CHANCES);
-
-        // Each replica has a 10% chance of crashing
-        if (chance >= 10) {
-            getSender().tell(new CrashResponseMsg(false), getSelf());
-
-            System.out.printf(
-                    "[R] Replica %s received crash message and DIDN'T CRASH\n",
-                    getSelf().path().name()
-            );
-        } else {
-            getSender().tell(new CrashResponseMsg(true), getSelf());
-            // The replica has crashed and will not respond to messages anymore
-            getContext().become(createCrashed());
-            // Stop sending heartbeat messages
-            this.heartbeatTimer.cancel();
-
-            System.out.printf(
-                    "[R] Replica %s received crash message and CRASHED\n",
-                    getSelf().path().name()
-            );
         }
     }
 
@@ -704,8 +780,9 @@ public class Replica extends AbstractActor {
         this.sendElectionMessage();
     }
 
+    //=== SETUP OF MESSAGES HANDLERS ===========================================
     /**
-     * Message listeners
+     * Message listeners for an active replica which is not ther coordinator.
      */
     @Override
     public Receive createReceive() {
@@ -729,8 +806,7 @@ public class Replica extends AbstractActor {
     }
 
     /**
-     * Create a new coordinator replica, similar to the other replicas, but can
-     * handle updates
+     * Message listeners for the coordinator.
      */
     public AbstractActor.Receive createCoordinator() {
         return receiveBuilder()
@@ -746,7 +822,10 @@ public class Replica extends AbstractActor {
                 .build();
     }
 
-    // Creates a crashed replica that doesn't handle any more message.
+    /**
+     * Listers for a crashed replica. A crashed replicas doesn't handle any
+     * message.
+     */
     final AbstractActor.Receive createCrashed() {
         return receiveBuilder()
                 .build();

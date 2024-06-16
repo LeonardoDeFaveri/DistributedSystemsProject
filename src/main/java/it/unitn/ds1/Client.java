@@ -13,33 +13,64 @@ import akka.actor.Props;
 
 import it.unitn.ds1.models.*;
 import it.unitn.ds1.models.crash_detection.*;
+import it.unitn.ds1.utils.Delays;
 import scala.concurrent.duration.Duration;
 
 public class Client extends AbstractActor {
-    // Maximum value to be generated for update messages
+    /**
+     * Maximum value to be generated for update messages.
+     */
     static final int MAX_INT = 1000;
 
-    // Timeout for receipt of confirmation for a read request before considering
-    // the contacted replica, crashed
-    static final long READOK_TIMEOUT = 1000;
-    private final long UPDATE_REQUEST_OK_TIMEOUT;
+    /**
+     * All replicas in the system, whether they're active or not.
+     */
+    private final ArrayList<ActorRef> replicas;
+    /**
+     * Last value read from a replica.
+     */
+    private int value;
 
-    private final ArrayList<ActorRef> replicas; // All replicas in the system
-    private final Random numberGenerator;
-    private int v; // Last read value
-
+    /**
+     * Index of last `ReadMsg` sent.
+     */
     private int readIndex;
+    /**
+     * Index of last `UpdateRequestMsg` sent.
+     */
     private int writeIndex;
-    // These two sets are used to track requests sent and waiting for ACK
+    /**
+     * Maps the index of each send `ReadMsg` to the replica it was sent to.
+     */
     private final Map<Integer, ActorRef> readMsgs;
+    /**
+     * Maps the index of each send `UpdateRequestMsg` to the replica it was sent
+     * to.
+     */
     private final Map<Integer, ActorRef> writeMsgs;
 
+    /**
+     * A timer that periodically produces a `ReadMsg`.
+     */
     private Cancellable readTimer;
+    /**
+     * A timer that periodically produces an `UpdateRequestMsg` with a random
+     * value.
+     */
     private Cancellable writeTimer;
+
+    /**
+     * Time to wait before checking for the receipt of an `UpdateRequestOkMsg`.
+     * Should be used to check for liveness of the replica contacted
+     * for an update read request.
+     */
+    final long UPDATE_REQUEST_OK_TIMEOUT;
+
+    private final Random numberGenerator;
 
     public Client(ArrayList<ActorRef> replicas) {
         this.replicas = replicas;
-        this.v = 0;
+        this.value = 0;
         this.readIndex = 0;
         this.writeIndex = 0;
         this.readMsgs = new HashMap<>();
@@ -47,7 +78,7 @@ public class Client extends AbstractActor {
         this.numberGenerator = new Random(System.nanoTime());
 
         // Sets timeout to maximum delay
-        // The intuition is that if each message takes up to `Replica.Delay` to
+        // The intuition is that if each message takes up to Delays.MAX_DELAY to
         // be sent, on an update request we pay this delay on:
         // - forwarding of request from replica to coordinator
         // - broadcasting of WriteMsg
@@ -55,9 +86,11 @@ public class Client extends AbstractActor {
         // Then, once enough ACS have been received we pay againg for
         // - sending of WriteOk
         // - sending of UpdateRequestOk from replica to client
+        // Since WriteOks are sent one by one to all replicas, the send delays
+        // sums up for each replicas, so the amont of them has to be considered.
         this.UPDATE_REQUEST_OK_TIMEOUT =
-            Replica.DELAY * 3 + Replica.DELAY * 2 * this.replicas.size() +
-            Replica.DELAY * 5; // For additional safety;
+            Delays.MAX_DELAY * 3 + Delays.MAX_DELAY * 2 * this.replicas.size() +
+            Delays.MAX_DELAY * 5; // For additional safety;
 
         System.out.printf("[C] Client %s created\n", getSelf().path().name());
     }
@@ -77,6 +110,10 @@ public class Client extends AbstractActor {
 
     // -------------------------------------------------------------------------
 
+    /**
+     * When a `StartMsg` is received the client starts producing read and
+     * update requests.
+     */
     private void onStartMsg(StartMsg msg) {
         System.out.printf("[C] Client %s started\n", getSelf().path().name());
 
@@ -102,6 +139,10 @@ public class Client extends AbstractActor {
                 getSelf());
     }
 
+    /**
+     * When a `StopMsg` is received the client stops producing new requests for
+     * replicas.
+     */
     private void onStopMsg(StopMsg msg) {
         System.out.printf("[C] Client %s stopped\n", getSelf().path().name());
         if (this.readTimer != null) {
@@ -122,7 +163,7 @@ public class Client extends AbstractActor {
         replica.tell(readMessage, getSelf());
 
         getContext().system().scheduler().scheduleOnce(
-            Duration.create(READOK_TIMEOUT, TimeUnit.MILLISECONDS),
+            Duration.create(Delays.READOK_TIMEOUT, TimeUnit.MILLISECONDS),
             getSelf(),
             new ReadOkReceivedMsg(readMessage.id),
             getContext().system().dispatcher(),
@@ -161,12 +202,12 @@ public class Client extends AbstractActor {
 
     private void onReadOk(ReadOkMsg msg) {
         // Updates client value with the one read from a replica
-        this.v = msg.v;
+        this.value = msg.value;
         this.readMsgs.remove(msg.id);
         System.out.printf(
                 "[C] Client %s read done %d\n",
                 getSelf().path().name(),
-                this.v
+                this.value
         );
     }
 
@@ -209,6 +250,7 @@ public class Client extends AbstractActor {
         }
     }
 
+    //=== SETUP OF MESSAGES HANDLERS ===========================================
     @Override
     public Receive createReceive() {
         return receiveBuilder()

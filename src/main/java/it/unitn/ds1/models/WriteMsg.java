@@ -11,11 +11,11 @@ import it.unitn.ds1.utils.WriteId;
 public class WriteMsg implements Serializable {
     public final UpdateRequestId updateRequestId;
     public final WriteId id; // Identifier <epoch, index>
-    public final int v; // The new value to write
+    public final int value; // The new value to write
 
-    public WriteMsg(UpdateRequestId updateRequestId, WriteId id, int v) {
+    public WriteMsg(UpdateRequestId updateRequestId, WriteId id, int value) {
         this.updateRequestId = updateRequestId;
         this.id = id;
-        this.v = v;
+        this.value = value;
     }
 }
