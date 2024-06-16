@@ -20,13 +20,8 @@ import it.unitn.ds1.models.*;
 import it.unitn.ds1.models.administratives.JoinGroupMsg;
 import it.unitn.ds1.models.administratives.StartMsg;
 import it.unitn.ds1.models.crash_detection.*;
-import it.unitn.ds1.models.election.CoordinatorMsg;
-import it.unitn.ds1.models.election.ElectionMsg;
-import it.unitn.ds1.models.election.LostUpdatesMsg;
-import it.unitn.ds1.models.election.SynchronizationMsg;
-import it.unitn.ds1.models.update.WriteAckMsg;
-import it.unitn.ds1.models.update.WriteMsg;
-import it.unitn.ds1.models.update.WriteOkMsg;
+import it.unitn.ds1.models.election.*;
+import it.unitn.ds1.models.update.*;
 import it.unitn.ds1.utils.Delays;
 import it.unitn.ds1.utils.UpdateRequestId;
 import it.unitn.ds1.utils.WriteId;
@@ -83,6 +78,7 @@ public class Replica extends AbstractActor {
      * Maps the ID of each WriteMsg received to the value that should be written.
      */
     private final Map<WriteId, Integer> writeRequests;
+    private final Set<WriteId> writeOks;
     /**
      * Index of thhe write we are currently collecting ACKs for.
      */
@@ -142,6 +138,7 @@ public class Replica extends AbstractActor {
         this.writeAcksMap = new HashMap<>();
         this.writeRequests = new HashMap<>();
         this.writesToUpdates = new HashMap<>();
+        this.writeOks = new HashSet<>();
         
         this.updateRequests = new HashSet<>();
         this.pendingUpdateRequests = new HashSet<>();
@@ -440,7 +437,8 @@ public class Replica extends AbstractActor {
         if (!this.writeRequests.containsKey(msg.id))
             return;
 
-        int value = this.writeRequests.remove(msg.id);
+        // Registers the arrival of the ok for a later check
+        this.writeOks.add(msg.id);
 
         // Checks if this replicas has to inform the original client of the
         // completed update [Must be done regardless of the subsequent check on
@@ -460,7 +458,8 @@ public class Replica extends AbstractActor {
             return;
         }
 
-        this.value = value;         // Apply the write
+        // Apply the write
+        this.value = this.writeRequests.get(msg.id);
         this.lastWrite = msg.id;    // Update the last write
         // Update the last write
         this.lastUpdateApplied = new ElectionMsg.LastUpdate(msg.id.epoch, msg.id.index);
@@ -743,7 +742,7 @@ public class Replica extends AbstractActor {
     }
 
     private void onWriteOkReceivedMsg(WriteOkReceivedMsg msg) {
-        if (this.writeRequests.containsKey(msg.writeMsgId)) {
+        if (!this.writeOks.remove(msg.writeMsgId)) {
             // No WriteOk received, coordinator crashed
             this.recordCoordinatorCrash(
                 String.format("missed WriteOk for epoch %d index %d",
