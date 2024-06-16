@@ -43,20 +43,29 @@ public class Replica extends AbstractActor {
     private int coordinatorIndex;
     private boolean isCoordinator;
   
-    private int quorum = 0; // Minimum number of nodes that must agree on a Write
-    private int value;      // Current value of the replica
-    private int epoch;      // Crrent epoch
     /**
-     * The index of the last write operation
+     * Minimum number of nodes that must agree on a Write.
      */
-    private int writeIndex;
+    private int quorum = 0;
+    /**
+     * Current value of the replica.
+     */
+    private int value;
+    /**
+     * Current epoch.
+     */
+    private int epoch;
+    /**
+     * Index to be used for next WriteMsg created.
+     */
+    private int writeIndex = 0;
 
     //=== UPDATE PROTOCOL ======================================================
     /**
      * This is the ID of the last write that was applied. It's necessary to
      * prevent older writes to be applied after newer ones.
      */
-    private WriteId lastWrite = new WriteId(0, -1);
+    private WriteId lastWrite;
     /**
      * For each Write collects ACKs from replicas.
      */
@@ -120,12 +129,16 @@ public class Replica extends AbstractActor {
         this.coordinatorIndex = coordinatorIndex;
         this.isCoordinator = false;
         this.value = value;
+
         this.writeAcksMap = new HashMap<>();
         this.writeRequests = new HashMap<>();
         this.writesToUpdates = new HashMap<>();
+        
         this.updateRequests = new HashSet<>();
         this.pendingUpdateRequests = new HashSet<>();
+        
         this.lastUpdateForReplica = new HashMap<>();
+        this.lastWrite = new WriteId(-1, -1);
         this.lastUpdateApplied = new ElectionMsg.LastUpdate(-1, -1);
         this.replicaID = replicaID;
 
@@ -480,15 +493,20 @@ public class Replica extends AbstractActor {
     }
 
     /**
-     * Returns the next node on the ring (the next based on index may have
-     * crashed, check!).
+     * Returns the next node on the ring.
      *
      * @return The next node on the ring
      */
     private ActorRef getNextNode() {
         int currentIndex = this.replicas.indexOf(getSelf());
         int nextIndex = (currentIndex + 1) % this.replicas.size();
-        return this.replicas.get(nextIndex);
+        ActorRef replica = this.replicas.get(nextIndex);
+        // Go to the next replica up until it is not crashed
+        while (this.crashedReplicas.contains(replica)) {
+            nextIndex = (nextIndex + 1) % this.replicas.size();
+            replica = this.replicas.get(nextIndex);
+        }
+        return replica;
     }
 
     /**
@@ -705,14 +723,7 @@ public class Replica extends AbstractActor {
     }
 
     private void onWriteMsgReceivedMsg(WriteMsgReceivedMsg msg) {
-        if (
-            //!this.writeRequests.containsKey(msg.writeMsgId) &&
-            //// Checks if last performed write is prior to checked write
-            //// If this check is false it means that the request has already
-            //// been served, thus a WriteMsg was received
-            //this.lastWrite.isPriorOrEqualTo(msg.writeMsgId)
-            this.pendingUpdateRequests.contains(msg.updateRequestId)
-        ) {
+        if (this.pendingUpdateRequests.contains(msg.updateRequestId)) {
             // No WriteMsg received, coordinator crashed
             this.recordCoordinatorCrash(
                 String.format("missed WriteMsg for write req %d from %s",
