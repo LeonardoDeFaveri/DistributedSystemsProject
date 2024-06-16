@@ -1,8 +1,8 @@
 package it.unitn.ds1;
 
-import it.unitn.ds1.models.ElectionMsg;
-
 import java.util.Map;
+
+import it.unitn.ds1.models.election.ElectionMsg;
 
 public class Utils {
 

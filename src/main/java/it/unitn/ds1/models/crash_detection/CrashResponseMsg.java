@@ -1,4 +1,4 @@
-package it.unitn.ds1.models;
+package it.unitn.ds1.models.crash_detection;
 
 import java.io.Serializable;
 

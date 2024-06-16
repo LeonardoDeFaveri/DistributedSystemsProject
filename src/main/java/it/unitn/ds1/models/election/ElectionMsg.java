@@ -1,4 +1,4 @@
-package it.unitn.ds1.models;
+package it.unitn.ds1.models.election;
 
 import java.io.Serializable;
 import java.util.*;

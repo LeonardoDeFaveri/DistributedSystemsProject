@@ -1,4 +1,4 @@
-package it.unitn.ds1.models;
+package it.unitn.ds1.models.update;
 
 import java.io.Serializable;
 

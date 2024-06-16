@@ -1,4 +1,4 @@
-package it.unitn.ds1.models;
+package it.unitn.ds1.models.administratives;
 
 import java.io.Serializable;
 import java.util.ArrayList;

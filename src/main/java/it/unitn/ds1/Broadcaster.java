@@ -2,9 +2,9 @@ package it.unitn.ds1;
 
 import akka.actor.ActorRef;
 import akka.actor.ActorSystem;
-import it.unitn.ds1.models.JoinGroupMsg;
-import it.unitn.ds1.models.StartMsg;
-import it.unitn.ds1.models.StopMsg;
+import it.unitn.ds1.models.administratives.JoinGroupMsg;
+import it.unitn.ds1.models.administratives.StartMsg;
+import it.unitn.ds1.models.administratives.StopMsg;
 
 import java.io.IOException;
 import java.util.ArrayList;

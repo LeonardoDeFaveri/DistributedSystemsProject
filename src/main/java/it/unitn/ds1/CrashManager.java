@@ -4,9 +4,9 @@ import akka.actor.AbstractActor;
 import akka.actor.ActorRef;
 import akka.actor.Cancellable;
 import akka.actor.Props;
-import it.unitn.ds1.models.CrashMsg;
-import it.unitn.ds1.models.CrashResponseMsg;
-import it.unitn.ds1.models.StartMsg;
+import it.unitn.ds1.models.administratives.StartMsg;
+import it.unitn.ds1.models.crash_detection.CrashMsg;
+import it.unitn.ds1.models.crash_detection.CrashResponseMsg;
 import scala.concurrent.duration.Duration;
 
 import java.util.ArrayList;
