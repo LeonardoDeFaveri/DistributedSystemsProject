@@ -2,7 +2,6 @@ package it.unitn.ds1;
 
 import akka.actor.ActorRef;
 import akka.actor.ActorSystem;
-import it.unitn.ds1.models.*;
 import it.unitn.ds1.models.administratives.JoinGroupMsg;
 import it.unitn.ds1.models.administratives.StartMsg;
 import it.unitn.ds1.models.election.ElectionMsg;
