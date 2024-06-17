@@ -78,6 +78,10 @@ public class Replica extends AbstractActor {
      * Maps the ID of each WriteMsg received to the value that should be written.
      */
     private final Map<WriteId, Integer> writeRequests;
+    /**
+     * Keeps momentarily all WriteOks received. They will be later removed on
+     * arrival on WriteOkReceivedMsgs.
+     */
     private final Set<WriteId> writeOks;
     /**
      * Index of thhe write we are currently collecting ACKs for.
@@ -87,13 +91,9 @@ public class Replica extends AbstractActor {
     //=== ELECTION PROTOCOL ====================================================
     /**
      * For each replica keeps track of its last applied write. ReplicaIDs are
-     * used as keys and values are pairs `(epoch, writeIndex)`.
+     * used as keys and values WriteIds.
      */
-    private Map<Integer, ElectionMsg.LastUpdate> lastUpdateForReplica;
-    /**
-     * Last write applied by this replica.
-     */
-    private ElectionMsg.LastUpdate lastUpdateApplied;
+    private Map<Integer, WriteId> lastWriteForReplica;
 
     //=== CRASH DETECTION ======================================================
     /**
@@ -143,9 +143,8 @@ public class Replica extends AbstractActor {
         this.updateRequests = new HashSet<>();
         this.pendingUpdateRequests = new HashSet<>();
         
-        this.lastUpdateForReplica = new HashMap<>();
+        this.lastWriteForReplica = new HashMap<>();
         this.lastWrite = new WriteId(-1, -1);
-        this.lastUpdateApplied = new ElectionMsg.LastUpdate(-1, -1);
         this.replicaID = replicaID;
 
         this.numberGenerator = new Random(System.nanoTime());
@@ -175,30 +174,6 @@ public class Replica extends AbstractActor {
             getSelf()
         );
     }
-
-    ///**
-    // * Overload of sendDelayed, with a random delay up to 100ms
-    // */
-    //private void sendDelayed(Serializable msg, ActorRef receiver) {
-    //    int delay = this.numberGenerator.nextInt(100);
-    //    sendDelayed(msg, receiver, delay);
-    //}
-    //
-    ///**
-    // * Send a delayed message to a replica
-    // * @param msg The message to send
-    // * @param receiver The replica to send the message to
-    // * @param delay The delay in milliseconds
-    // */
-    //private void sendDelayed(Serializable msg, ActorRef receiver, int delay) {
-    //    getContext().system().scheduler().scheduleOnce(
-    //            Duration.create(delay, TimeUnit.MILLISECONDS), // delay
-    //            receiver, // Receiver
-    //            msg, // Message to send
-    //            getContext().system().dispatcher(), // Executor
-    //            getSelf() // Sender
-    //    );
-    //}
 
     /**
      * Multicasts a message to all replicas including itself.
@@ -460,9 +435,8 @@ public class Replica extends AbstractActor {
 
         // Apply the write
         this.value = this.writeRequests.get(msg.id);
-        this.lastWrite = msg.id;    // Update the last write
         // Update the last write
-        this.lastUpdateApplied = new ElectionMsg.LastUpdate(msg.id.epoch, msg.id.index);
+        this.lastWrite = msg.id;
       
         System.out.printf(
             "[R] [%s] Applied the write %d in epoch %d with value %d\n",
@@ -522,7 +496,7 @@ public class Replica extends AbstractActor {
      */
     public void sendElectionMessage() {
         var nextNode = this.getNextNode();
-        var electionMsg = new ElectionMsg(this.replicaID, this.lastUpdateApplied);
+        var electionMsg = new ElectionMsg(this.replicaID, this.lastWrite);
         // INFO: no delay in this?
         nextNode.tell(electionMsg, this.getSelf());
     }
@@ -547,7 +521,7 @@ public class Replica extends AbstractActor {
                         "{ replicaID: %d, lastUpdate: (%d, %d) }",
                         content.getKey(),
                         content.getValue().epoch,
-                        content.getValue().writeIndex
+                        content.getValue().index
                     )
                 ).collect(Collectors.joining(", ")
             )
@@ -555,7 +529,7 @@ public class Replica extends AbstractActor {
         // When a node receives the election message, and the message already
         // contains the node's ID, then change the message type to COORDINATOR.
         // The new leader is the node with the latest update
-        // (highest epoch, writeIndex), and highest replicaID.
+        // highest (epoch, writeIndex), and highest replicaID.
         if (msg.participants.containsKey(this.replicaID)) {
             var mostUpdated = msg.participants.entrySet().stream().reduce(Utils::getNewCoordinatorIndex);
             this.coordinatorIndex = mostUpdated.get().getKey();
@@ -566,7 +540,7 @@ public class Replica extends AbstractActor {
                 this.coordinatorIndex
             );
             if (this.coordinatorIndex == this.replicaID) {
-                this.lastUpdateForReplica = msg.participants;
+                this.lastWriteForReplica = msg.participants;
                 sendSynchronizationMessage();
                 sendLostUpdates();
                 this.onCoordinatorChange();
@@ -581,7 +555,7 @@ public class Replica extends AbstractActor {
         // If it's an election message, and my ID is not in the list, add it and
         // propagate to the next node.
         // writeIndex - 1 because we are incrementing the update after we receive it
-        msg.participants.put(this.replicaID, this.lastUpdateApplied);
+        msg.participants.put(this.replicaID, this.lastWrite);
 
         ActorRef nextNode = getNextNode();
         nextNode.tell(msg, this.getSelf());
@@ -599,10 +573,9 @@ public class Replica extends AbstractActor {
             return;
         // This replica is the new coordinator
         if (msg.coordinatorID == this.replicaID) {
-            this.lastUpdateForReplica = msg.participants;
+            this.lastWriteForReplica = msg.participants;
             sendSynchronizationMessage();
             sendLostUpdates();
-            this.onCoordinatorChange();
             return;
         }
         System.out.printf(
@@ -620,11 +593,18 @@ public class Replica extends AbstractActor {
     private void onSynchronizationMsg(SynchronizationMsg msg) {
         this.coordinatorIndex = this.replicas.indexOf(getSender());
         this.isCoordinator = (this.replicaID == this.coordinatorIndex);
+        this.onCoordinatorChange();
         if (this.isCoordinator) { // Multicast sends to itself
             getContext().become(createCoordinator());
+            // The new coordinator should start sending heartbeat messages, so
+            // it sends itself a start message so that the appropriate timer is
+            // set
+            getSelf().tell(new StartMsg(), getSelf());
             return;
         }
-        this.onCoordinatorChange();
+        // Since no there's a new coordinator, the time of last contact must be
+        // reset
+        this.resetLastContact();
         System.out.printf(
             "[R%d] received synchronization message from %d\n",
             this.replicaID,
@@ -644,11 +624,11 @@ public class Replica extends AbstractActor {
      * the missed updates to each replica.
      */
     private void sendLostUpdates() {
-        for (var entry : this.lastUpdateForReplica.entrySet()) {
+        for (var entry : this.lastWriteForReplica.entrySet()) {
             var replica = this.replicas.get(entry.getKey());
             var lastUpdate = entry.getValue();
             var missedUpdatesList = new ArrayList<WriteMsg>();
-            for (int i = lastUpdate.writeIndex + 1; i < this.lastUpdateApplied.writeIndex + 1; i++) {
+            for (int i = lastUpdate.index + 1; i < this.lastWrite.index + 1; i++) {
                 var writeId = new WriteId(this.epoch, i);
                 var ithRequest = this.writeRequests.get(writeId);
                 missedUpdatesList.add(new WriteMsg(null, writeId, ithRequest));
@@ -666,7 +646,10 @@ public class Replica extends AbstractActor {
     private void onLostUpdatesMsg(LostUpdatesMsg msg) {
         System.out.printf(
             "[R%d] received %d missed updates, last update: (%d, %d), new updates received: %s\n",
-            this.replicaID, msg.missedUpdates.size(), lastUpdateApplied.epoch, lastUpdateApplied.writeIndex,
+            this.replicaID,
+            msg.missedUpdates.size(),
+            this.lastWrite.epoch,
+            this.lastWrite.index,
             msg.missedUpdates.stream().map(
                 update -> String.format(
                     "(%d, %d)",

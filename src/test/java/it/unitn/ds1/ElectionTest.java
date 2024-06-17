@@ -63,7 +63,7 @@ public class ElectionTest {
         }
 
         // Then, we start the election algorithm
-        replicas.get(0).tell(new ElectionMsg(4, new ElectionMsg.LastUpdate(0, 2)), replicas.get(4));
+        replicas.get(0).tell(new ElectionMsg(4, new WriteId(0, 2)), replicas.get(4));
 
         // Required to see all output
         //while (replicas.size() > 0) {}
