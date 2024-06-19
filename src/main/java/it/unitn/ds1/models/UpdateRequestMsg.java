@@ -16,4 +16,23 @@ public class UpdateRequestMsg implements Serializable {
         this.value = value;
         this.id = new UpdateRequestId(client, index);
     }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (this == obj) {
+            return true;
+        }
+
+        if (!(obj instanceof UpdateRequestMsg)) {
+            return false;
+        }
+
+        UpdateRequestMsg other = (UpdateRequestMsg) obj;
+        return this.id.equals(other.id) && this.value == other.value;
+    }
+
+    @Override
+    public int hashCode() {
+        return String.format("%d-%d", this.id.hashCode(), this.value).hashCode();
+    }
 }

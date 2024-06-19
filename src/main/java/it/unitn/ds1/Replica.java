@@ -94,6 +94,16 @@ public class Replica extends AbstractActor {
      * used as keys and values WriteIds.
      */
     private Map<Integer, WriteId> lastWriteForReplica;
+    /**
+     * If an election is underway, incoming requests can't be served until the
+     * new coordinator is chosen, so each request is deferred and served after
+     * the election.
+     */
+    private Set<UpdateRequestMsg> deferredUpdateRequests;
+    /**
+     * True if a new coordinator is being chosen.
+     */
+    private boolean isElectionUnderway;
 
     //=== CRASH DETECTION ======================================================
     /**
@@ -134,18 +144,20 @@ public class Replica extends AbstractActor {
         this.coordinatorIndex = coordinatorIndex;
         this.isCoordinator = false;
         this.value = value;
+        this.replicaID = replicaID;
 
         this.writeAcksMap = new HashMap<>();
         this.writeRequests = new HashMap<>();
         this.writesToUpdates = new HashMap<>();
         this.writeOks = new HashSet<>();
+        this.lastWrite = new WriteId(-1, -1);
         
         this.updateRequests = new HashSet<>();
         this.pendingUpdateRequests = new HashSet<>();
         
         this.lastWriteForReplica = new HashMap<>();
-        this.lastWrite = new WriteId(-1, -1);
-        this.replicaID = replicaID;
+        this.deferredUpdateRequests = new HashSet<>();
+        this.isElectionUnderway = false;
 
         this.numberGenerator = new Random(System.nanoTime());
         System.out.printf("[R] Replica %s created with value %d\n", getSelf().path().name(), value);
@@ -172,6 +184,17 @@ public class Replica extends AbstractActor {
             msg,
             getContext().system().dispatcher(),
             getSelf()
+        );
+    }
+
+    private void tellWithDelay(ActorRef receiver, Serializable msg, ActorRef sender) {
+        int delay = this.numberGenerator.nextInt(0, Delays.MAX_DELAY);
+        getContext().system().scheduler().scheduleOnce(
+            Duration.create(delay, TimeUnit.MILLISECONDS),
+            receiver,
+            msg,
+            getContext().system().dispatcher(),
+            sender
         );
     }
 
@@ -258,6 +281,19 @@ public class Replica extends AbstractActor {
                 msg.value,
                 msg.id.client.path().name()
             );
+        }
+
+        // This replica is busy electing a new coordinator, so defer the serving
+        // of this request
+        if (this.isElectionUnderway) {
+            this.deferredUpdateRequests.add(msg);
+            System.out.printf(
+                "Replica %s deferred request %d from %s\n",
+                this.getSelf().path().name(),
+                msg.id.index,
+                msg.id.client.path().name()
+            );
+            return;
         }
 
         // If the replica is not the coordinator
@@ -466,12 +502,22 @@ public class Replica extends AbstractActor {
 
     //=== METHODS AND HANDLERS FOR THE ELECTION PROTOCOL =======================
     /**
+     * Prepares this replica for carrying out the election.
+     */
+    private void beginElection() {
+        this.deferredUpdateRequests = new HashSet<>();
+        this.isElectionUnderway = true;
+        this.sendElectionMessage();
+    }
+
+    /**
      * When the coordinator changes, the epoch is increased and writes starts
      * again from 0.
      */
     private void onCoordinatorChange() {
         this.epoch++;
         this.writeIndex = 0;
+        this.isElectionUnderway = false;
     }
 
     /**
@@ -492,17 +538,16 @@ public class Replica extends AbstractActor {
     }
 
     /**
-     * Sends an `ElectionMsg` to the next node.
+     * Sends an ElectionMsg to the next node.
      */
     public void sendElectionMessage() {
         var nextNode = this.getNextNode();
         var electionMsg = new ElectionMsg(this.replicaID, this.lastWrite);
-        // INFO: no delay in this?
-        nextNode.tell(electionMsg, this.getSelf());
+        this.tellWithDelay(nextNode, electionMsg);
     }
 
     /**
-     * When an `ElectionMsg` is received:
+     * When an ElectionMsg is received:
      * - If the message already contains this replicaID, then change the type to
      * Coordinator, and set the coordinatorID to the node which is the most
      * updated in the list (highest epoch and writeIndex), and take the node with
@@ -662,6 +707,18 @@ public class Replica extends AbstractActor {
         for (var update : msg.missedUpdates) {
             this.value = update.value;
         }
+
+        // Now, all deferred update Requests can be safely served
+        ActorRef coordinator = this.replicas.get(this.coordinatorIndex);
+        for (UpdateRequestMsg req : this.deferredUpdateRequests) {
+            this.tellWithDelay(coordinator, req, ActorRef.noSender());
+            System.out.printf(
+                "Replica %s sent deferred req with id %d\n",
+                getSelf().path().name(),
+                req.id.index
+            );
+        }
+        this.deferredUpdateRequests = null;
     }
 
     //=== HANDLERS FOR CRASH DETECTION MESSAGES ================================
@@ -779,12 +836,12 @@ public class Replica extends AbstractActor {
         );
 
         // Initiate election protocol
-        this.sendElectionMessage();
+        this.beginElection();
     }
 
     //=== SETUP OF MESSAGES HANDLERS ===========================================
     /**
-     * Message listeners for an active replica which is not ther coordinator.
+     * Message listeners for an active replica which is not the coordinator.
      */
     @Override
     public Receive createReceive() {
@@ -825,7 +882,7 @@ public class Replica extends AbstractActor {
     }
 
     /**
-     * Listers for a crashed replica. A crashed replicas doesn't handle any
+     * Listeners for a crashed replica. A crashed replicas doesn't handle any
      * message.
      */
     final AbstractActor.Receive createCrashed() {

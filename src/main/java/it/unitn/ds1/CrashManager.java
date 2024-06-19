@@ -42,7 +42,7 @@ public class CrashManager extends AbstractActor {
      */
     private ActorRef getReplica() {
         int index = this.numberGenerator.nextInt(this.replicas.size());
-        return this.replicas.get(index);
+        return this.replicas.get(0);
     }
 
     private void onStartMsg(StartMsg msg) {

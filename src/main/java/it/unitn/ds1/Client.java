@@ -90,8 +90,12 @@ public class Client extends AbstractActor {
         // - sending of UpdateRequestOk from replica to client
         // Since WriteOks are sent one by one to all replicas, the send delays
         // sums up for each replicas, so the amont of them has to be considered.
+        // To account for the possible execution of the election protocol the
+        // delais for election, coordinator, syncronization and lost update
+        // messages are summed up.
         this.UPDATE_REQUEST_OK_TIMEOUT =
             Delays.MAX_DELAY * 3 + Delays.MAX_DELAY * 2 * this.replicas.size() +
+            Delays.MAX_DELAY * this.replicas.size() * 4 +
             Delays.MAX_DELAY * 5; // For additional safety;
 
         System.out.printf("[C] Client %s created\n", getSelf().path().name());
@@ -111,7 +115,6 @@ public class Client extends AbstractActor {
     }
 
     // -------------------------------------------------------------------------
-
     /**
      * When a `StartMsg` is received the client starts producing read and
      * update requests.

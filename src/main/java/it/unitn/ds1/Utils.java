@@ -2,7 +2,6 @@ package it.unitn.ds1;
 
 import java.util.Map;
 
-import it.unitn.ds1.models.election.ElectionMsg;
 import it.unitn.ds1.utils.WriteId;
 
 public class Utils {
@@ -37,22 +36,5 @@ public class Utils {
 
         // If none of the above, highest is still the most updated
         return highest;
-
-        //if (current.getValue().epoch > highest.getValue().epoch) {
-        //    // If the epoch of the current node is higher than the other, this node is the most updated
-        //    return current;
-        //} else if (current.getValue().epoch == highest.getValue().epoch &&
-        //        current.getValue().index > highest.getValue().writeIndex) {
-        //    // If the epoch is the same, but the write index is higher, this node is the most updated
-        //    return current;
-        //} else if (current.getValue().epoch == highest.getValue().epoch &&
-        //        current.getValue().writeIndex == highest.getValue().writeIndex &&
-        //        current.getKey() > highest.getKey()) {
-        //    // If both the epoch and the write index are the same, but this has an higher ID, we choose this one
-        //    // This is because we need a global rule on what node to choose in case of a tie
-        //    return current;
-        //}
-        // Otherwise, we already have the (temporary) most updated node
-        //return highest;
     }
 }
