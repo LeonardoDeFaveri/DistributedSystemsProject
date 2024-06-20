@@ -34,35 +34,35 @@ public class Client extends AbstractActor {
     private int value;
 
     /**
-     * Index of last `ReadMsg` sent.
+     * Index of last ReadMsg sent.
      */
     private int readIndex;
     /**
-     * Index of last `UpdateRequestMsg` sent.
+     * Index of last UpdateRequestMsg sent.
      */
     private int writeIndex;
     /**
-     * Maps the index of each send `ReadMsg` to the replica it was sent to.
+     * Maps the index of each send ReadMsg to the replica it was sent to.
      */
     private final Map<Integer, ActorRef> readMsgs;
     /**
-     * Maps the index of each send `UpdateRequestMsg` to the replica it was sent
+     * Maps the index of each send UpdateRequestMsg to the replica it was sent
      * to.
      */
     private final Map<Integer, ActorRef> writeMsgs;
 
     /**
-     * A timer that periodically produces a `ReadMsg`.
+     * A timer that periodically produces a ReadMsg.
      */
     private Cancellable readTimer;
     /**
-     * A timer that periodically produces an `UpdateRequestMsg` with a random
+     * A timer that periodically produces an UpdateRequestMsg with a random
      * value.
      */
     private Cancellable writeTimer;
 
     /**
-     * Time to wait before checking for the receipt of an `UpdateRequestOkMsg`.
+     * Time to wait before checking for the receipt of an UpdateRequestOkMsg.
      * Should be used to check for liveness of the replica contacted
      * for an update read request.
      */
@@ -116,7 +116,7 @@ public class Client extends AbstractActor {
 
     // -------------------------------------------------------------------------
     /**
-     * When a `StartMsg` is received the client starts producing read and
+     * When a StartMsg is received the client starts producing read and
      * update requests.
      */
     private void onStartMsg(StartMsg msg) {
@@ -145,7 +145,7 @@ public class Client extends AbstractActor {
     }
 
     /**
-     * When a `StopMsg` is received the client stops producing new requests for
+     * When a StopMsg is received the client stops producing new requests for
      * replicas.
      */
     private void onStopMsg(StopMsg msg) {

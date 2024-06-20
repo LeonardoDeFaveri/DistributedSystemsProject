@@ -13,7 +13,7 @@ public class WriteId {
     }
 
     /**
-     * Checks if this id is precedent or equal to `other`
+     * Checks if this id is precedent or equal to other
      */
     public boolean isPriorOrEqualTo(WriteId other) {
         return this.epoch < other.epoch || this.epoch == other.epoch && this.index <= other.index;

@@ -1,6 +1,7 @@
 package it.unitn.ds1;
 
 import java.io.Serializable;
+import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
@@ -22,9 +23,7 @@ import it.unitn.ds1.models.administratives.StartMsg;
 import it.unitn.ds1.models.crash_detection.*;
 import it.unitn.ds1.models.election.*;
 import it.unitn.ds1.models.update.*;
-import it.unitn.ds1.utils.Delays;
-import it.unitn.ds1.utils.UpdateRequestId;
-import it.unitn.ds1.utils.WriteId;
+import it.unitn.ds1.utils.*;
 import scala.concurrent.duration.Duration;
 
 import java.util.stream.Collectors;
@@ -42,7 +41,7 @@ public class Replica extends AbstractActor {
     private final Set<ActorRef> crashedReplicas;
     private final int replicaID;
     /**
-     * Index of the coordinator replica inside `replicas`
+     * Index of the coordinator replica inside replicas
      */
     private int coordinatorIndex;
     private boolean isCoordinator;
@@ -90,6 +89,14 @@ public class Replica extends AbstractActor {
 
     //=== ELECTION PROTOCOL ====================================================
     /**
+     * Each election is identified by an index. This is necessary for ACKs.
+     */
+    private int electionIndex;
+    /**
+     * True if a new coordinator is being chosen.
+     */
+    private boolean isElectionUnderway;
+    /**
      * For each replica keeps track of its last applied write. ReplicaIDs are
      * used as keys and values WriteIds.
      */
@@ -100,10 +107,6 @@ public class Replica extends AbstractActor {
      * the election.
      */
     private Set<UpdateRequestMsg> deferredUpdateRequests;
-    /**
-     * True if a new coordinator is being chosen.
-     */
-    private boolean isElectionUnderway;
 
     //=== CRASH DETECTION ======================================================
     /**
@@ -127,13 +130,22 @@ public class Replica extends AbstractActor {
      * caused it.
      */
     private final Map<WriteId, UpdateRequestId> writesToUpdates;
-
     /**
      * Collects all the update requests received by clients so that they can
      * be later ACKed when the request has been succesfully served.
      */
     private final Set<UpdateRequestId> updateRequests;
-
+    /**
+     * Every ElectionMsg sent must be ACKed. Pairs (sender, index) of the ACK
+     * are stored and later checked.
+     */    
+    private Set<Map.Entry<ActorRef, Integer>> pendingElectionAcks;
+    /**
+     * Every CoordinatorMsg sent must be ACKed. Pairs (sender, index) of the ACK
+     * are stored and later checked.
+     */    
+    private Set<Map.Entry<ActorRef, Integer>> pendingCoordinatorAcks;
+    
     //=== OTHERS ===============================================================
     private final Random numberGenerator;
 
@@ -154,10 +166,13 @@ public class Replica extends AbstractActor {
         
         this.updateRequests = new HashSet<>();
         this.pendingUpdateRequests = new HashSet<>();
+        this.pendingElectionAcks = new HashSet<>();
+        this.pendingCoordinatorAcks = new HashSet<>();
         
+        this.isElectionUnderway = false;
+        this.electionIndex = 0;
         this.lastWriteForReplica = new HashMap<>();
         this.deferredUpdateRequests = new HashSet<>();
-        this.isElectionUnderway = false;
 
         this.numberGenerator = new Random(System.nanoTime());
         System.out.printf("[R] Replica %s created with value %d\n", getSelf().path().name(), value);
@@ -172,7 +187,7 @@ public class Replica extends AbstractActor {
 
     //=== Utility methods ======================================================
     /**
-     * Sends `msg` to `receiver` with a random delay of `[0, DELAY)`ms.
+     * Sends msg to receiver with a random delay of [0, DELAY)ms.
      * @param receiver receiver of the message
      * @param msg message to send
      */
@@ -234,8 +249,8 @@ public class Replica extends AbstractActor {
     }
 
     /**
-     * When a `StartMsg` is received:
-     * - Coordinator starts sending `HeartbeatMsg`s to replicas;
+     * When a StartMsg is received:
+     * - Coordinator starts sending HeartbeatMsgs to replicas;
      * - Replicas starts checking for the liveness of the coordinator;
      */
     private void onStartMsg(StartMsg msg) {
@@ -370,7 +385,7 @@ public class Replica extends AbstractActor {
     }
 
     /**
-     * The first message to be served is the `currentWriteToAck` index.
+     * The first message to be served is the currentWriteToAck index.
      * When the message is sent to the replicas, serve all the successive messages
      */
     private void sendAllAckedMessages() {
@@ -505,9 +520,9 @@ public class Replica extends AbstractActor {
      * Prepares this replica for carrying out the election.
      */
     private void beginElection() {
+        getContext().become(createElection());
         this.deferredUpdateRequests = new HashSet<>();
         this.isElectionUnderway = true;
-        this.sendElectionMessage();
     }
 
     /**
@@ -542,8 +557,18 @@ public class Replica extends AbstractActor {
      */
     public void sendElectionMessage() {
         var nextNode = this.getNextNode();
-        var electionMsg = new ElectionMsg(this.replicaID, this.lastWrite);
-        this.tellWithDelay(nextNode, electionMsg);
+        var msg = new ElectionMsg(this.electionIndex, this.replicaID, this.lastWrite);
+        this.tellWithDelay(nextNode, msg);
+        this.electionIndex++;
+
+        // For each election message the sender expects an ACK back
+        getContext().system().scheduler().scheduleOnce(
+            Duration.create(Delays.ELECTION_ACK_TIMEOUT, TimeUnit.MILLISECONDS),
+            getSelf(),
+            new ElectionAckReceivedMsg(msg),
+            getContext().system().dispatcher(),
+            nextNode
+        );
     }
 
     /**
@@ -556,6 +581,16 @@ public class Replica extends AbstractActor {
      * then propagate to the next node;
      */
     private void onElectionMsg(ElectionMsg msg) {
+        if (!this.isElectionUnderway) {
+            this.beginElection();
+            if (msg.index > this.electionIndex) {
+                this.electionIndex = msg.index;
+            }
+        }
+
+        // Sends back the ACK
+        this.tellWithDelay(getSender(), new ElectionAckMsg(msg.index));
+
         System.out.printf(
             "[R: %d] election message received from replica %s with content: %s\n",
             this.replicaID,
@@ -571,6 +606,8 @@ public class Replica extends AbstractActor {
                 ).collect(Collectors.joining(", ")
             )
         );
+
+        ActorRef nextNode = getNextNode();
         // When a node receives the election message, and the message already
         // contains the node's ID, then change the message type to COORDINATOR.
         // The new leader is the node with the latest update
@@ -591,19 +628,34 @@ public class Replica extends AbstractActor {
                 this.onCoordinatorChange();
                 return;
             }
-            getNextNode().tell(
-                new CoordinatorMsg(this.coordinatorIndex, this.replicaID, msg.participants),
-                getSelf()
+
+            CoordinatorMsg coordinatorMsg = new CoordinatorMsg(
+                msg.index,
+                this.coordinatorIndex,
+                this.replicaID,
+                msg.participants
+            );
+            this.tellWithDelay(nextNode, coordinatorMsg);
+            getContext().system().scheduler().scheduleOnce(
+                Duration.create(Delays.COORDINATOR_ACK_TIMEOUT, TimeUnit.MILLISECONDS),
+                getSelf(),
+                new CoordinatorAckReceivedMsg(coordinatorMsg),
+                getContext().system().dispatcher(),
+                nextNode
             );
             return;
         }
         // If it's an election message, and my ID is not in the list, add it and
         // propagate to the next node.
-        // writeIndex - 1 because we are incrementing the update after we receive it
         msg.participants.put(this.replicaID, this.lastWrite);
-
-        ActorRef nextNode = getNextNode();
-        nextNode.tell(msg, this.getSelf());
+        this.tellWithDelay(nextNode, msg);
+        getContext().system().scheduler().scheduleOnce(
+            Duration.create(Delays.ELECTION_ACK_TIMEOUT, TimeUnit.MILLISECONDS),
+            getSelf(),
+            new ElectionAckReceivedMsg(msg),
+            getContext().system().dispatcher(),
+            nextNode
+        );
     }
 
     /**
@@ -612,6 +664,8 @@ public class Replica extends AbstractActor {
      * nodes to synchronize the epoch and the writeIndex.
      */
     private void onCoordinatorMsg(CoordinatorMsg msg) {
+        this.tellWithDelay(getSender(), new CoordinatorAckMsg(msg.index));
+
         // The replica is the sender of the message, so it already has the
         // coordinator index
         if (msg.senderID == this.replicaID)
@@ -628,7 +682,18 @@ public class Replica extends AbstractActor {
             this.replicaID, msg.coordinatorID, msg.senderID
         );
         this.coordinatorIndex = msg.coordinatorID; // Set the new coordinator
-        getNextNode().tell(msg, getSelf()); // Forward the message to the next node
+
+        ActorRef nextNode = getNextNode();
+        // Forward the message to the next node
+        this.tellWithDelay(nextNode, msg);
+        
+        getContext().system().scheduler().scheduleOnce(
+            Duration.create(Delays.COORDINATOR_ACK_TIMEOUT, TimeUnit.MILLISECONDS),
+            getSelf(),
+            new CoordinatorAckReceivedMsg(msg),
+            getContext().system().dispatcher(),
+            nextNode
+        );
     }
 
     /**
@@ -708,6 +773,8 @@ public class Replica extends AbstractActor {
             this.value = update.value;
         }
 
+        // Exit the election state and go back to normal
+        getContext().become(createReceive());
         // Now, all deferred update Requests can be safely served
         ActorRef coordinator = this.replicas.get(this.coordinatorIndex);
         for (UpdateRequestMsg req : this.deferredUpdateRequests) {
@@ -721,9 +788,21 @@ public class Replica extends AbstractActor {
         this.deferredUpdateRequests = null;
     }
 
+    private void onElectionAckMsg(ElectionAckMsg msg) {
+        var pair = new AbstractMap.SimpleEntry<ActorRef, Integer>(getSender(), msg.index);
+        // The ACK has arrived, so remove it from the set of pending ones
+        this.pendingElectionAcks.remove(pair);
+    }
+
+    private void onCoordinatorAckMsg(CoordinatorAckMsg msg) {
+        var pair = new AbstractMap.SimpleEntry<ActorRef, Integer>(getSender(), msg.index);
+        // The ACK has arrived, so remove it from the set of pending ones
+        this.pendingCoordinatorAcks.remove(pair);
+    }
+
     //=== HANDLERS FOR CRASH DETECTION MESSAGES ================================
     /**
-     * When a `CrashMsg` is received there's cercain chance of actually crashing.
+     * When a CrashMsg is received there's cercain chance of actually crashing.
      */
     private void onCrashMsg(CrashMsg msg) {
         int chance = this.numberGenerator.nextInt(CRASH_CHANCES);
@@ -751,7 +830,7 @@ public class Replica extends AbstractActor {
     }
 
     /**
-     * When a `HeartbeatMsg` is received:
+     * When a HeartbeatMsg is received:
      * - Coordinator multicasts it to all replicas;
      * - Replicas reset they're time of last contact from the coordinator;
      * @param msg
@@ -809,6 +888,45 @@ public class Replica extends AbstractActor {
         }
     }
 
+    private void onElectionAckReceivedMsg(ElectionAckReceivedMsg msg) {
+        var pair = new AbstractMap.SimpleEntry<ActorRef, Integer>(getSender(), msg.msg.index);
+        // If the pair is still in the set, the replica who should have sent the
+        // ACK is probably crashed
+        if (!this.pendingElectionAcks.contains(pair)) {
+            return;
+        }
+
+        this.crashedReplicas.add(getSender());
+        // The election message should be sent again
+        ActorRef nextNode = getNextNode();
+        if (nextNode == getSelf()) {
+            // There's no other active replica, so this should become the
+            // coordinator
+            getSelf().tell(new SynchronizationMsg(), getSelf());
+        } else {
+            this.tellWithDelay(nextNode, msg);
+        }
+    }
+
+    private void onCoordinatorAckReceivedMsg(CoordinatorAckReceivedMsg msg) {
+        var pair = new AbstractMap.SimpleEntry<ActorRef, Integer>(getSender(), msg.msg.index);
+        // If the pair is still in the set, the replica who should have sent the
+        // ACK is probably crashed
+        if (!this.pendingCoordinatorAcks.contains(pair)) {
+            return;
+        }
+
+        // The coordinator message should be sent again
+        ActorRef nextNode = getNextNode();
+        if (nextNode == getSelf()) {
+            // There's no other active replica, so this should become the
+            // coordinator
+            getSelf().tell(new SynchronizationMsg(), getSelf());
+        } else {
+            this.tellWithDelay(nextNode, msg);
+        }
+    }
+
     /**
      * Auxiliary method for resetting time of last contact with the coordinator.
      */
@@ -837,6 +955,7 @@ public class Replica extends AbstractActor {
 
         // Initiate election protocol
         this.beginElection();
+        this.sendElectionMessage();
     }
 
     //=== SETUP OF MESSAGES HANDLERS ===========================================
@@ -853,9 +972,6 @@ public class Replica extends AbstractActor {
                 .match(WriteMsg.class, this::onWriteMsg)
                 .match(WriteOkMsg.class, this::onWriteOkMsg)
                 .match(ElectionMsg.class, this::onElectionMsg)
-                .match(CoordinatorMsg.class, this::onCoordinatorMsg)
-                .match(SynchronizationMsg.class, this::onSynchronizationMsg)
-                .match(LostUpdatesMsg.class, this::onLostUpdatesMsg)
                 .match(HeartbeatMsg.class, this::onHeartbeatMsg)
                 .match(HearbeatReceivedMsg.class, this::onHeartbetReceivedMsg)
                 .match(WriteMsgReceivedMsg.class, this::onWriteMsgReceivedMsg)
@@ -877,6 +993,25 @@ public class Replica extends AbstractActor {
                 .match(WriteAckMsg.class, this::onWriteAckMsg)
                 .match(WriteMsg.class, this::onWriteMsg)
                 .match(WriteOkMsg.class, this::onWriteOkMsg)
+                .match(CrashMsg.class, this::onCrashMsg)
+                .build();
+    }
+
+    /**
+     * Message listeners for a replica busy in an election
+     */
+    public AbstractActor.Receive createElection() {
+        return receiveBuilder()
+                .match(ReadMsg.class, this::onReadMsg)
+                .match(UpdateRequestMsg.class, this::onUpdateRequest)
+                .match(ElectionMsg.class, this::onElectionMsg)
+                .match(CoordinatorMsg.class, this::onCoordinatorMsg)
+                .match(SynchronizationMsg.class, this::onSynchronizationMsg)
+                .match(LostUpdatesMsg.class, this::onLostUpdatesMsg)
+                .match(ElectionAckMsg.class, this::onElectionAckMsg)
+                .match(ElectionAckReceivedMsg.class, this::onElectionAckReceivedMsg)
+                .match(CoordinatorAckMsg.class, this::onCoordinatorAckMsg)
+                .match(CoordinatorAckReceivedMsg.class, this::onCoordinatorAckReceivedMsg)
                 .match(CrashMsg.class, this::onCrashMsg)
                 .build();
     }
