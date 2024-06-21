@@ -1,5 +1,7 @@
 package it.unitn.ds1.utils;
 
+import java.util.Objects;
+
 /**
  * Class for a simpler handling of write identifiers
  */
@@ -16,7 +18,7 @@ public class WriteId {
      * Checks if this id is precedent or equal to other
      */
     public boolean isPriorOrEqualTo(WriteId other) {
-        return this.epoch < other.epoch || this.epoch.equals(other.epoch) && this.index <= other.index;
+        return this.epoch < other.epoch || Objects.equals(this.epoch, other.epoch) && this.index <= other.index;
     }
 
     @Override
@@ -25,12 +27,11 @@ public class WriteId {
             return true;
         }
 
-        if (!(obj instanceof WriteId)) {
+        if (!(obj instanceof WriteId other)) {
             return false;
         }
 
-        WriteId other = (WriteId) obj;
-        return this.epoch == other.epoch && this.index == other.index;
+        return Objects.equals(this.epoch, other.epoch) && Objects.equals(this.index, other.index);
     }
 
     @Override

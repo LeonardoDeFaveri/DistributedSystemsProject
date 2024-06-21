@@ -24,11 +24,10 @@ public class UpdateRequestId {
             return true;
         }
 
-        if (!(obj instanceof UpdateRequestId)) {
+        if (!(obj instanceof UpdateRequestId other)) {
             return false;
         }
 
-        UpdateRequestId other = (UpdateRequestId) obj;
         return this.client.equals(other.client) && this.index == other.index;
     }
 
