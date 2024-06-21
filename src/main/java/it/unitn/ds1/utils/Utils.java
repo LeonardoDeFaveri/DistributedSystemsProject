@@ -1,8 +1,6 @@
-package it.unitn.ds1;
+package it.unitn.ds1.utils;
 
 import java.util.Map;
-
-import it.unitn.ds1.utils.WriteId;
 
 public class Utils {
 
