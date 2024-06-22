@@ -251,7 +251,7 @@ public class Replica extends AbstractActor {
                 Duration.create(1, TimeUnit.SECONDS),
                 Duration.create(Delays.RECEIVE_HEARTBEAT_TIMEOUT, TimeUnit.MILLISECONDS),
                 getSelf(),
-                new HearbeatReceivedMsg(),
+                new HeartbeatReceivedMsg(),
                 getContext().system().dispatcher(),
                 getSelf()
             );
@@ -860,7 +860,7 @@ public class Replica extends AbstractActor {
      * Checks how much time has elapsed since the last message received
      * from the coordinator. If too much has elapsed, then a crash is detected.
      */
-    private void onHeartbeatReceivedMsg(HearbeatReceivedMsg msg) {
+    private void onHeartbeatReceivedMsg(HeartbeatReceivedMsg msg) {
         long now = new Date().getTime();
         long elapsed = now - this.lastContact;
         if (elapsed > Delays.RECEIVE_HEARTBEAT_TIMEOUT) {
@@ -965,7 +965,7 @@ public class Replica extends AbstractActor {
                 .match(WriteOkMsg.class, this::onWriteOkMsg)
                 .match(ElectionMsg.class, this::onElectionMsg)
                 .match(HeartbeatMsg.class, this::onHeartbeatMsg)
-                .match(HearbeatReceivedMsg.class, this::onHeartbeatReceivedMsg)
+                .match(HeartbeatReceivedMsg.class, this::onHeartbeatReceivedMsg)
                 .match(WriteMsgReceivedMsg.class, this::onWriteMsgTimeoutReceivedMsg)
                 .match(WriteOkReceivedMsg.class, this::onWriteOkTimeoutReceivedMsg)
                 .match(CrashMsg.class, this::onCrashMsg)
