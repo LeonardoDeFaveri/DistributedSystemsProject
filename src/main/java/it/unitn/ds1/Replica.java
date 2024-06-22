@@ -848,7 +848,10 @@ public class Replica extends AbstractActor {
         }
     }
 
-    private void onWriteMsgReceivedMsg(WriteMsgReceivedMsg msg) {
+    /**
+     * Timeout for the WriteMsg. If the pair is still in the map, the replica has not responded in time
+     */
+    private void onWriteMsgTimeoutReceivedMsg(WriteMsgReceivedMsg msg) {
         if (this.pendingUpdateRequests.contains(msg.updateRequestId)) {
             // No WriteMsg received, coordinator crashed
             this.recordCoordinatorCrash(
@@ -859,7 +862,10 @@ public class Replica extends AbstractActor {
         }
     }
 
-    private void onWriteOkReceivedMsg(WriteOkReceivedMsg msg) {
+    /**
+     * Timeout for the WriteOk. If the pair is still in the map, the replica has not responded in time
+     */
+    private void onWriteOkTimeoutReceivedMsg(WriteOkReceivedMsg msg) {
         if (!this.writeOks.remove(msg.writeMsgId)) {
             // No WriteOk received, coordinator crashed
             this.recordCoordinatorCrash(
@@ -874,7 +880,7 @@ public class Replica extends AbstractActor {
      * Checks how much time has elapsed since the last message received
      * from the coordinator. If too much has elapsed, then a crash is detected.
      */
-    private void onHeartbetReceivedMsg(HearbeatReceivedMsg msg) {
+    private void onHeartbeatReceivedMsg(HearbeatReceivedMsg msg) {
         long now = new Date().getTime();
         long elapsed = now - this.lastContact;
         if (elapsed > Delays.RECEIVE_HEARTBEAT_TIMEOUT) {
@@ -891,7 +897,7 @@ public class Replica extends AbstractActor {
      * When the timeout for the ACK on the election message is received, if the pair is still in the map
      * it means that the replica has not received the acknowledgement, and so we add it to the crashed replicas
      */
-    private void onElectionAckReceivedMsg(ElectionAckReceivedMsg msg) {
+    private void onElectionAckTimeoutReceivedMsg(ElectionAckReceivedMsg msg) {
         var pair = new AbstractMap.SimpleEntry<>(getSender(), msg.msg.index);
         // If the pair is still in the set, the replica who should have sent the
         // ACK is probably crashed
@@ -915,7 +921,7 @@ public class Replica extends AbstractActor {
      * When receiving the timeout for a coordinator acknowledgment, if the pair is still in the map,
      * it means that the other replica has crashed.
      */
-    private void onCoordinatorAckReceivedMsg(CoordinatorAckReceivedMsg msg) {
+    private void onCoordinatorAckTimeoutReceivedMsg(CoordinatorAckReceivedMsg msg) {
         var pair = new AbstractMap.SimpleEntry<>(getSender(), msg.msg.index);
         // If the pair is still in the set, the replica who should have sent the
         // ACK is probably crashed
@@ -979,9 +985,9 @@ public class Replica extends AbstractActor {
                 .match(WriteOkMsg.class, this::onWriteOkMsg)
                 .match(ElectionMsg.class, this::onElectionMsg)
                 .match(HeartbeatMsg.class, this::onHeartbeatMsg)
-                .match(HearbeatReceivedMsg.class, this::onHeartbetReceivedMsg)
-                .match(WriteMsgReceivedMsg.class, this::onWriteMsgReceivedMsg)
-                .match(WriteOkReceivedMsg.class, this::onWriteOkReceivedMsg)
+                .match(HearbeatReceivedMsg.class, this::onHeartbeatReceivedMsg)
+                .match(WriteMsgReceivedMsg.class, this::onWriteMsgTimeoutReceivedMsg)
+                .match(WriteOkReceivedMsg.class, this::onWriteOkTimeoutReceivedMsg)
                 .match(CrashMsg.class, this::onCrashMsg)
                 .build();
     }
@@ -1015,9 +1021,9 @@ public class Replica extends AbstractActor {
                 .match(SynchronizationMsg.class, this::onSynchronizationMsg)
                 .match(LostUpdatesMsg.class, this::onLostUpdatesMsg)
                 .match(ElectionAckMsg.class, this::onElectionAckMsg)
-                .match(ElectionAckReceivedMsg.class, this::onElectionAckReceivedMsg)
+                .match(ElectionAckReceivedMsg.class, this::onElectionAckTimeoutReceivedMsg)
                 .match(CoordinatorAckMsg.class, this::onCoordinatorAckMsg)
-                .match(CoordinatorAckReceivedMsg.class, this::onCoordinatorAckReceivedMsg)
+                .match(CoordinatorAckReceivedMsg.class, this::onCoordinatorAckTimeoutReceivedMsg)
                 .match(CrashMsg.class, this::onCrashMsg)
                 .build();
     }
