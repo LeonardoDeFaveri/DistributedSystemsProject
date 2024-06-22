@@ -34,17 +34,17 @@ public class Replica extends AbstractActor {
     /**
      * All replicas in the system, whether they're active or not.
      */
-    private final List<ActorRef> replicas;
+    private final List<ActorRef> replicas = new ArrayList<>();
     /**
      * Set of replicas that have been detected as crashed.
      */
-    private final Set<ActorRef> crashedReplicas;
+    private final Set<ActorRef> crashedReplicas = new HashSet<>();
     private final int replicaID;
     /**
      * Index of the coordinator replica inside replicas
      */
     private int coordinatorIndex;
-    private boolean isCoordinator;
+    private boolean isCoordinator = false;
   
     /**
      * Minimum number of nodes that must agree on a Write.
@@ -68,20 +68,20 @@ public class Replica extends AbstractActor {
      * This is the ID of the last write that was applied. It's necessary to
      * prevent older writes to be applied after newer ones.
      */
-    private WriteId lastWrite;
+    private WriteId lastWrite = new WriteId(-1, -1);
     /**
      * For each Write collects ACKs from replicas.
      */
-    private final Map<WriteId, Set<ActorRef>> writeAcksMap;
+    private final Map<WriteId, Set<ActorRef>> writeAcksMap = new HashMap<>();
     /**
      * Maps the ID of each WriteMsg received to the value that should be written.
      */
-    private final Map<WriteId, Integer> writeRequests;
+    private final Map<WriteId, Integer> writeRequests = new HashMap<>();
     /**
      * Keeps momentarily all WriteOks received. They will be later removed on
      * arrival on WriteOkReceivedMsgs.
      */
-    private final Set<WriteId> writeOks;
+    private final Set<WriteId> writeOks = new HashSet<>();
     /**
      * Index of thhe write we are currently collecting ACKs for.
      */
@@ -91,22 +91,22 @@ public class Replica extends AbstractActor {
     /**
      * Each election is identified by an index. This is necessary for ACKs.
      */
-    private int electionIndex;
+    private int electionIndex = 0;
     /**
      * True if a new coordinator is being chosen.
      */
-    private boolean isElectionUnderway;
+    private boolean isElectionUnderway = false;
     /**
      * For each replica keeps track of its last applied write. ReplicaIDs are
      * used as keys and values WriteIds.
      */
-    private Map<Integer, WriteId> lastWriteForReplica;
+    private Map<Integer, WriteId> lastWriteForReplica = new HashMap<>();
     /**
      * If an election is underway, incoming requests can't be served until the
      * new coordinator is chosen, so each request is deferred and served after
      * the election.
      */
-    private Set<UpdateRequestMsg> deferredUpdateRequests;
+    private Set<UpdateRequestMsg> deferredUpdateRequests = new HashSet<>();
 
     //=== CRASH DETECTION ======================================================
     /**
@@ -124,57 +124,37 @@ public class Replica extends AbstractActor {
      * For each UpdateRequestMsg received by a client, the ID is stored up
      * until the associated WriteMsg is received.
      */
-    private final Set<UpdateRequestId> pendingUpdateRequests;
+    private final Set<UpdateRequestId> pendingUpdateRequests = new HashSet<>();
     /**
      * Maps the ID of each WriteMsg to the ID of the UpdateRequestMsg that
      * caused it.
      */
-    private final Map<WriteId, UpdateRequestId> writesToUpdates;
+    private final Map<WriteId, UpdateRequestId> writesToUpdates = new HashMap<>();
     /**
      * Collects all the update requests received by clients so that they can
      * be later ACKed when the request has been succesfully served.
      */
-    private final Set<UpdateRequestId> updateRequests;
+    private final Set<UpdateRequestId> updateRequests = new HashSet<>();
     /**
      * Every ElectionMsg sent must be ACKed. Pairs (sender, index) of the ACK
      * are stored and later checked.
      */    
-    private final Set<Map.Entry<ActorRef, Integer>> pendingElectionAcks;
+    private final Set<Map.Entry<ActorRef, Integer>> pendingElectionAcks = new HashSet<>();
     /**
      * Every CoordinatorMsg sent must be ACKed. Pairs (sender, index) of the ACK
      * are stored and later checked.
      */    
-    private final Set<Map.Entry<ActorRef, Integer>> pendingCoordinatorAcks;
+    private final Set<Map.Entry<ActorRef, Integer>> pendingCoordinatorAcks = new HashSet<>();
     
     //=== OTHERS ===============================================================
-    private final Random numberGenerator;
+    private final Random numberGenerator = new Random(System.nanoTime());
 
     public Replica(int replicaID, int value, int coordinatorIndex) {
         System.out.printf("[R] Replica %s created with value %d\n", getSelf().path().name(), value);
-        this.replicas = new ArrayList<>();
-        this.crashedReplicas = new HashSet<>();
         this.coordinatorIndex = coordinatorIndex;
-        this.isCoordinator = false;
         this.value = value;
         this.replicaID = replicaID;
 
-        this.writeAcksMap = new HashMap<>();
-        this.writeRequests = new HashMap<>();
-        this.writesToUpdates = new HashMap<>();
-        this.writeOks = new HashSet<>();
-        this.lastWrite = new WriteId(-1, -1);
-        
-        this.updateRequests = new HashSet<>();
-        this.pendingUpdateRequests = new HashSet<>();
-        this.pendingElectionAcks = new HashSet<>();
-        this.pendingCoordinatorAcks = new HashSet<>();
-        
-        this.isElectionUnderway = false;
-        this.electionIndex = 0;
-        this.lastWriteForReplica = new HashMap<>();
-        this.deferredUpdateRequests = new HashSet<>();
-
-        this.numberGenerator = new Random(System.nanoTime());
         System.out.printf("[R] Replica %s created with value %d\n", getSelf().path().name(), value);
     }
 
