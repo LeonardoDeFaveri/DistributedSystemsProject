@@ -139,12 +139,12 @@ public class Replica extends AbstractActor {
      * Every ElectionMsg sent must be ACKed. Pairs (sender, index) of the ACK
      * are stored and later checked.
      */    
-    private Set<Map.Entry<ActorRef, Integer>> pendingElectionAcks;
+    private final Set<Map.Entry<ActorRef, Integer>> pendingElectionAcks;
     /**
      * Every CoordinatorMsg sent must be ACKed. Pairs (sender, index) of the ACK
      * are stored and later checked.
      */    
-    private Set<Map.Entry<ActorRef, Integer>> pendingCoordinatorAcks;
+    private final Set<Map.Entry<ActorRef, Integer>> pendingCoordinatorAcks;
     
     //=== OTHERS ===============================================================
     private final Random numberGenerator;
@@ -789,13 +789,13 @@ public class Replica extends AbstractActor {
     }
 
     private void onElectionAckMsg(ElectionAckMsg msg) {
-        var pair = new AbstractMap.SimpleEntry<ActorRef, Integer>(getSender(), msg.index);
+        var pair = new AbstractMap.SimpleEntry<>(getSender(), msg.index);
         // The ACK has arrived, so remove it from the set of pending ones
         this.pendingElectionAcks.remove(pair);
     }
 
     private void onCoordinatorAckMsg(CoordinatorAckMsg msg) {
-        var pair = new AbstractMap.SimpleEntry<ActorRef, Integer>(getSender(), msg.index);
+        var pair = new AbstractMap.SimpleEntry<>(getSender(), msg.index);
         // The ACK has arrived, so remove it from the set of pending ones
         this.pendingCoordinatorAcks.remove(pair);
     }
@@ -833,7 +833,6 @@ public class Replica extends AbstractActor {
      * When a HeartbeatMsg is received:
      * - Coordinator multicasts it to all replicas;
      * - Replicas reset they're time of last contact from the coordinator;
-     * @param msg
      */
     private void onHeartbeatMsg(HeartbeatMsg msg) {
         if (this.isCoordinator) {
@@ -888,8 +887,12 @@ public class Replica extends AbstractActor {
         }
     }
 
+    /**
+     * When the timeout for the ACK on the election message is received, if the pair is still in the map
+     * it means that the replica has not received the acknowledgement, and so we add it to the crashed replicas
+     */
     private void onElectionAckReceivedMsg(ElectionAckReceivedMsg msg) {
-        var pair = new AbstractMap.SimpleEntry<ActorRef, Integer>(getSender(), msg.msg.index);
+        var pair = new AbstractMap.SimpleEntry<>(getSender(), msg.msg.index);
         // If the pair is still in the set, the replica who should have sent the
         // ACK is probably crashed
         if (!this.pendingElectionAcks.contains(pair)) {
@@ -908,8 +911,12 @@ public class Replica extends AbstractActor {
         }
     }
 
+    /**
+     * When receiving the timeout for a coordinator acknowledgment, if the pair is still in the map,
+     * it means that the other replica has crashed.
+     */
     private void onCoordinatorAckReceivedMsg(CoordinatorAckReceivedMsg msg) {
-        var pair = new AbstractMap.SimpleEntry<ActorRef, Integer>(getSender(), msg.msg.index);
+        var pair = new AbstractMap.SimpleEntry<>(getSender(), msg.msg.index);
         // If the pair is still in the set, the replica who should have sent the
         // ACK is probably crashed
         if (!this.pendingCoordinatorAcks.contains(pair)) {
@@ -936,7 +943,6 @@ public class Replica extends AbstractActor {
 
     /**
      * Auxiliary method for recording the crash of the coordinator.
-     * 
      * It stops the timer for heartbeats and initiates the election protocol.
      */
     private void recordCoordinatorCrash(String cause) {
