@@ -145,6 +145,10 @@ public class Replica extends AbstractActor {
      * are stored and later checked.
      */    
     private final Set<Map.Entry<ActorRef, Integer>> pendingCoordinatorAcks = new HashSet<>();
+    /**
+     * The behaviour of the replica during the election
+     */
+    private final ReplicaElectionBehaviour electionBehaviour = new ReplicaElectionBehaviour(this);
     
     //=== OTHERS ===============================================================
     private final Random numberGenerator = new Random(System.nanoTime());
@@ -171,7 +175,7 @@ public class Replica extends AbstractActor {
      * @param receiver receiver of the message
      * @param msg message to send
      */
-    private void tellWithDelay(ActorRef receiver, Serializable msg) {
+    public void tellWithDelay(ActorRef receiver, Serializable msg) {
         int delay = this.numberGenerator.nextInt(0, Delays.MAX_DELAY);
         getContext().system().scheduler().scheduleOnce(
             Duration.create(delay, TimeUnit.MILLISECONDS),
@@ -251,7 +255,7 @@ public class Replica extends AbstractActor {
                 Duration.create(1, TimeUnit.SECONDS),
                 Duration.create(Delays.RECEIVE_HEARTBEAT_TIMEOUT, TimeUnit.MILLISECONDS),
                 getSelf(),
-                new HearbeatReceivedMsg(),
+                new HeartbeatReceivedMsg(),
                 getContext().system().dispatcher(),
                 getSelf()
             );
@@ -499,7 +503,7 @@ public class Replica extends AbstractActor {
     /**
      * Prepares this replica for carrying out the election.
      */
-    private void beginElection() {
+    public void beginElection() {
         getContext().become(createElection());
         this.deferredUpdateRequests = new HashSet<>();
         this.isElectionUnderway = true;
@@ -509,7 +513,7 @@ public class Replica extends AbstractActor {
      * When the coordinator changes, the epoch is increased and writes starts
      * again from 0.
      */
-    private void onCoordinatorChange() {
+    public void onCoordinatorChange() {
         this.epoch++;
         this.writeIndex = 0;
         this.isElectionUnderway = false;
@@ -520,7 +524,7 @@ public class Replica extends AbstractActor {
      *
      * @return The next node on the ring
      */
-    private ActorRef getNextNode() {
+    public ActorRef getNextNode() {
         int currentIndex = this.replicas.indexOf(getSelf());
         int nextIndex = (currentIndex + 1) % this.replicas.size();
         ActorRef replica = this.replicas.get(nextIndex);
@@ -705,7 +709,7 @@ public class Replica extends AbstractActor {
     /**
      * Send the synchronization message to all nodes.
      */
-    private void sendSynchronizationMessage() {
+    public void sendSynchronizationMessage() {
         multicast(new SynchronizationMsg());
     }
 
@@ -713,7 +717,7 @@ public class Replica extends AbstractActor {
      * The coordinator, which is the one with the most recent updates, sends all
      * the missed updates to each replica.
      */
-    private void sendLostUpdates() {
+    public void sendLostUpdates() {
         for (var entry : this.lastWriteForReplica.entrySet()) {
             var replica = this.replicas.get(entry.getKey());
             var lastUpdate = entry.getValue();
@@ -860,7 +864,7 @@ public class Replica extends AbstractActor {
      * Checks how much time has elapsed since the last message received
      * from the coordinator. If too much has elapsed, then a crash is detected.
      */
-    private void onHeartbeatReceivedMsg(HearbeatReceivedMsg msg) {
+    private void onHeartbeatTimeoutReceivedMsg(HeartbeatReceivedMsg msg) {
         long now = new Date().getTime();
         long elapsed = now - this.lastContact;
         if (elapsed > Delays.RECEIVE_HEARTBEAT_TIMEOUT) {
@@ -965,7 +969,7 @@ public class Replica extends AbstractActor {
                 .match(WriteOkMsg.class, this::onWriteOkMsg)
                 .match(ElectionMsg.class, this::onElectionMsg)
                 .match(HeartbeatMsg.class, this::onHeartbeatMsg)
-                .match(HearbeatReceivedMsg.class, this::onHeartbeatReceivedMsg)
+                .match(HeartbeatReceivedMsg.class, this::onHeartbeatTimeoutReceivedMsg)
                 .match(WriteMsgReceivedMsg.class, this::onWriteMsgTimeoutReceivedMsg)
                 .match(WriteOkReceivedMsg.class, this::onWriteOkTimeoutReceivedMsg)
                 .match(CrashMsg.class, this::onCrashMsg)
@@ -994,15 +998,15 @@ public class Replica extends AbstractActor {
      */
     public AbstractActor.Receive createElection() {
         return receiveBuilder()
-                .match(ReadMsg.class, this::onReadMsg)
-                .match(UpdateRequestMsg.class, this::onUpdateRequest)
+                .match(ReadMsg.class, this::onReadMsg) // The read is served by the replica, so it's the same
+                .match(UpdateRequestMsg.class, this.electionBehaviour::onUpdateRequestMsg)
                 .match(ElectionMsg.class, this::onElectionMsg)
                 .match(CoordinatorMsg.class, this::onCoordinatorMsg)
                 .match(SynchronizationMsg.class, this::onSynchronizationMsg)
                 .match(LostUpdatesMsg.class, this::onLostUpdatesMsg)
                 .match(ElectionAckMsg.class, this::onElectionAckMsg)
-                .match(ElectionAckReceivedMsg.class, this::onElectionAckTimeoutReceivedMsg)
                 .match(CoordinatorAckMsg.class, this::onCoordinatorAckMsg)
+                .match(ElectionAckReceivedMsg.class, this::onElectionAckTimeoutReceivedMsg)
                 .match(CoordinatorAckReceivedMsg.class, this::onCoordinatorAckTimeoutReceivedMsg)
                 .match(CrashMsg.class, this::onCrashMsg)
                 .build();
@@ -1015,5 +1019,25 @@ public class Replica extends AbstractActor {
     final AbstractActor.Receive createCrashed() {
         return receiveBuilder()
                 .build();
+    }
+
+    public int getReplicaID() {
+        return this.replicaID;
+    }
+
+    public void setCoordinatorIndex(int coordinatorIndex) {
+        this.coordinatorIndex = coordinatorIndex;
+    }
+
+    public int getCoordinatorIndex() {
+        return coordinatorIndex;
+    }
+
+    public void setLastWriteForReplica(Map<Integer, WriteId> lastWriteForReplica) {
+        this.lastWriteForReplica = lastWriteForReplica;
+    }
+
+    public WriteId getLastWrite() {
+        return lastWrite;
     }
 }
