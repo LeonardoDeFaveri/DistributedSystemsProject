@@ -83,7 +83,7 @@ public class Replica extends AbstractActor {
      */
     private final Set<WriteId> writeOks = new HashSet<>();
     /**
-     * Index of thhe write we are currently collecting ACKs for.
+     * Index of the write we are currently collecting ACKs for.
      */
     private int currentWriteToAck = 0;
 
@@ -280,19 +280,6 @@ public class Replica extends AbstractActor {
                 msg.value,
                 msg.id.client.path().name()
             );
-        }
-
-        // This replica is busy electing a new coordinator, so defer the serving
-        // of this request
-        if (this.isElectionUnderway) {
-            this.deferredUpdateRequests.add(msg);
-            System.out.printf(
-                "Replica %s deferred request %d from %s\n",
-                this.getSelf().path().name(),
-                msg.id.index,
-                msg.id.client.path().name()
-            );
-            return;
         }
 
         // If the replica is not the coordinator
@@ -517,6 +504,7 @@ public class Replica extends AbstractActor {
         this.epoch++;
         this.writeIndex = 0;
         this.isElectionUnderway = false;
+        this.electionBehaviour.getQueuedUpdates().forEach(this::onUpdateRequest); // Send all the queued updates to the new coordinator
     }
 
     /**
@@ -1000,7 +988,7 @@ public class Replica extends AbstractActor {
         return receiveBuilder()
                 .match(ReadMsg.class, this::onReadMsg) // The read is served by the replica, so it's the same
                 .match(UpdateRequestMsg.class, this.electionBehaviour::onUpdateRequestMsg)
-                .match(ElectionMsg.class, this::onElectionMsg)
+                .match(ElectionMsg.class, this.electionBehaviour::onElectionMsg)
                 .match(CoordinatorMsg.class, this::onCoordinatorMsg)
                 .match(SynchronizationMsg.class, this::onSynchronizationMsg)
                 .match(LostUpdatesMsg.class, this::onLostUpdatesMsg)

@@ -2,6 +2,7 @@ package it.unitn.ds1;
 
 import akka.actor.ActorRef;
 import it.unitn.ds1.models.UpdateRequestMsg;
+import it.unitn.ds1.models.UpdateRequestOkMsg;
 import it.unitn.ds1.models.crash_detection.*;
 import it.unitn.ds1.models.election.CoordinatorMsg;
 import it.unitn.ds1.models.election.ElectionAckMsg;
@@ -27,7 +28,13 @@ public class ReplicaElectionBehaviour {
 
     public void onUpdateRequestMsg(UpdateRequestMsg msg) {
         queuedUpdates.add(msg);
+        thisReplica.tellWithDelay(
+                msg.id.client,
+                new UpdateRequestOkMsg(msg.id.index)
+        );
     }
+
+
 
     public List<UpdateRequestMsg> getQueuedUpdates() {
         return queuedUpdates;
@@ -42,9 +49,10 @@ public class ReplicaElectionBehaviour {
      * - Otherwise, add the replicaID of this node + the last update to the list,
      * then propagate to the next node;
      */
-    private void onElectionMsg(ElectionMsg msg) {
+    public void onElectionMsg(ElectionMsg msg) {
         if (!this.isElectionUnderway) {
             thisReplica.beginElection();
+            this.isElectionUnderway = true;
             if (msg.index > this.electionIndex) {
                 this.electionIndex = msg.index;
             }
