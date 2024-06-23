@@ -5,7 +5,7 @@ package it.unitn.ds1.utils;
  */
 public interface Delays {
     /**
-     * Maximum possible delay for sending of messages.
+     * Maximum possible delay for sending a message.
      */
     final int MAX_DELAY = 100;
     /**

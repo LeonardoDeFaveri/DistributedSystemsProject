@@ -829,7 +829,8 @@ public class Replica extends AbstractActor {
     }
 
     /**
-     * Timeout for the WriteMsg. If the pair is still in the map, the replica has not responded in time
+     * Timeout for the WriteMsg. If the pair is still in the map, the replica has
+     * not responded in time.
      */
     private void onWriteMsgTimeoutReceivedMsg(WriteMsgReceivedMsg msg) {
         if (this.pendingUpdateRequests.contains(msg.updateRequestId)) {
@@ -843,7 +844,8 @@ public class Replica extends AbstractActor {
     }
 
     /**
-     * Timeout for the WriteOk. If the pair is still in the map, the replica has not responded in time
+     * Timeout for the WriteOk. If the pair is still in the map, the replica has
+     * not responded in time.
      */
     private void onWriteOkTimeoutReceivedMsg(WriteOkReceivedMsg msg) {
         if (!this.writeOks.remove(msg.writeMsgId)) {
@@ -874,8 +876,9 @@ public class Replica extends AbstractActor {
     }
 
     /**
-     * When the timeout for the ACK on the election message is received, if the pair is still in the map
-     * it means that the replica has not received the acknowledgement, and so we add it to the crashed replicas
+     * When the timeout for the ACK on the election message is received, if the
+     * pair is still in the map it means that the replica has not received the
+     * acknowledgement, and so we add it to the crashed replicas.
      */
     private void onElectionAckTimeoutReceivedMsg(ElectionAckReceivedMsg msg) {
         var pair = new AbstractMap.SimpleEntry<>(getSender(), msg.msg.index);
@@ -898,8 +901,8 @@ public class Replica extends AbstractActor {
     }
 
     /**
-     * When receiving the timeout for a coordinator acknowledgment, if the pair is still in the map,
-     * it means that the other replica has crashed.
+     * When receiving the timeout for a coordinator acknowledgment, if the pair
+     * is still in the map, it means that the other replica has crashed.
      */
     private void onCoordinatorAckTimeoutReceivedMsg(CoordinatorAckReceivedMsg msg) {
         var pair = new AbstractMap.SimpleEntry<>(getSender(), msg.msg.index);
