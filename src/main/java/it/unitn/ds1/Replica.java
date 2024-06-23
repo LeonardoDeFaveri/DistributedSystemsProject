@@ -101,12 +101,6 @@ public class Replica extends AbstractActor {
      * used as keys and values WriteIds.
      */
     private Map<Integer, WriteId> lastWriteForReplica = new HashMap<>();
-    /**
-     * If an election is underway, incoming requests can't be served until the
-     * new coordinator is chosen, so each request is deferred and served after
-     * the election.
-     */
-    private Set<UpdateRequestMsg> deferredUpdateRequests = new HashSet<>();
 
     //=== CRASH DETECTION ======================================================
     /**
@@ -134,7 +128,7 @@ public class Replica extends AbstractActor {
      * Collects all the update requests received by clients so that they can
      * be later ACKed when the request has been succesfully served.
      */
-    private final Set<UpdateRequestId> updateRequests = new HashSet<>();
+    private final Set<UpdateRequestMsg> updateRequests = new HashSet<>();
     /**
      * Every ElectionMsg sent must be ACKed. Pairs (sender, index) of the ACK
      * are stored and later checked.
@@ -272,7 +266,7 @@ public class Replica extends AbstractActor {
         // If the request comes from a client, register its arrival.
         // This replica will later have to send an ACK back to this client
         if (!this.replicas.contains(getSender())) {
-            this.updateRequests.add(msg.id);
+            this.updateRequests.add(msg);
             System.out.printf(
                 "[R] Replica %s registered write request %d for %d from client %s\n",
                 getSelf().path().name(),
@@ -440,8 +434,11 @@ public class Replica extends AbstractActor {
         // Checks if this replicas has to inform the original client of the
         // completed update [Must be done regardless of the subsequent check on
         // request age to avoid wrong crash detection from the client]
-        if (this.updateRequests.contains(msg.updateRequestId)) {
-            this.updateRequests.remove(msg.updateRequestId);
+        var updateRequest = this.updateRequests.stream().filter(
+            req -> req.id.equals(msg.updateRequestId)
+        ).findFirst();
+        if (updateRequest.isPresent()) {
+            this.updateRequests.remove(updateRequest.get());
             // Sends an ACK back to the client
             this.tellWithDelay(
                 msg.updateRequestId.client,
@@ -492,7 +489,6 @@ public class Replica extends AbstractActor {
      */
     public void beginElection() {
         getContext().become(createElection());
-        this.deferredUpdateRequests = new HashSet<>();
         this.isElectionUnderway = true;
     }
 
@@ -505,6 +501,7 @@ public class Replica extends AbstractActor {
         this.writeIndex = 0;
         this.isElectionUnderway = false;
         this.electionBehaviour.getQueuedUpdates().forEach(this::onUpdateRequest); // Send all the queued updates to the new coordinator
+        this.updateRequests.forEach(this::onUpdateRequest); // Send all the update requests for which a WriteOk was not received to the new coordinator
     }
 
     /**
@@ -747,17 +744,6 @@ public class Replica extends AbstractActor {
 
         // Exit the election state and go back to normal
         getContext().become(createReceive());
-        // Now, all deferred update Requests can be safely served
-        ActorRef coordinator = this.replicas.get(this.coordinatorIndex);
-        for (UpdateRequestMsg req : this.deferredUpdateRequests) {
-            this.tellWithDelay(coordinator, req, ActorRef.noSender());
-            System.out.printf(
-                "Replica %s sent deferred req with id %d\n",
-                getSelf().path().name(),
-                req.id.index
-            );
-        }
-        this.deferredUpdateRequests = null;
     }
 
     private void onElectionAckMsg(ElectionAckMsg msg) {
