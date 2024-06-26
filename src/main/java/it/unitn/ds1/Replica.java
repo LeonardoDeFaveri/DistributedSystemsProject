@@ -131,11 +131,6 @@ public class Replica extends AbstractActor {
      */
     private final Map<WriteId, UpdateRequestId> writesToUpdates = new HashMap<>();
     /**
-     * Collects all the update requests received by clients so that they can
-     * be later ACKed when the request has been succesfully served.
-     */
-    private final Set<UpdateRequestId> updateRequests = new HashSet<>();
-    /**
      * Every ElectionMsg sent must be ACKed. Pairs (sender, index) of the ACK
      * are stored and later checked.
      */    
@@ -268,14 +263,8 @@ public class Replica extends AbstractActor {
         // If the request comes from a client, register its arrival.
         // This replica will later have to send an ACK back to this client
         if (!this.replicas.contains(getSender())) {
-            this.updateRequests.add(msg.id);
-            System.out.printf(
-                "[R] Replica %s registered write request %d for %d from client %s\n",
-                getSelf().path().name(),
-                msg.id.index,
-                msg.value,
-                msg.id.client.path().name()
-            );
+            // Immediately inform the client of the receipt of the update request
+            this.tellWithDelay(getSender(), new UpdateRequestOkMsg(msg.id.index));
         }
 
         // This replica is busy electing a new coordinator, so defer the serving
@@ -445,18 +434,6 @@ public class Replica extends AbstractActor {
 
         // Registers the arrival of the ok for a later check
         this.writeOks.add(msg.id);
-
-        // Checks if this replicas has to inform the original client of the
-        // completed update [Must be done regardless of the subsequent check on
-        // request age to avoid wrong crash detection from the client]
-        if (this.updateRequests.contains(msg.updateRequestId)) {
-            this.updateRequests.remove(msg.updateRequestId);
-            // Sends an ACK back to the client
-            this.tellWithDelay(
-                msg.updateRequestId.client,
-                new UpdateRequestOkMsg(msg.updateRequestId.index)
-            );
-        }
 
         // If received message is for a write request older then the last served,
         // ignore it
@@ -829,7 +806,8 @@ public class Replica extends AbstractActor {
     }
 
     /**
-     * Timeout for the WriteMsg. If the pair is still in the map, the replica has not responded in time
+     * Timeout for the WriteMsg. If the pair is still in the map, the replica has
+     * not responded in time.
      */
     private void onWriteMsgTimeoutReceivedMsg(WriteMsgReceivedMsg msg) {
         if (this.pendingUpdateRequests.contains(msg.updateRequestId)) {
@@ -843,7 +821,8 @@ public class Replica extends AbstractActor {
     }
 
     /**
-     * Timeout for the WriteOk. If the pair is still in the map, the replica has not responded in time
+     * Timeout for the WriteOk. If the pair is still in the map, the replica has
+     * not responded in time.
      */
     private void onWriteOkTimeoutReceivedMsg(WriteOkReceivedMsg msg) {
         if (!this.writeOks.remove(msg.writeMsgId)) {
@@ -874,8 +853,9 @@ public class Replica extends AbstractActor {
     }
 
     /**
-     * When the timeout for the ACK on the election message is received, if the pair is still in the map
-     * it means that the replica has not received the acknowledgement, and so we add it to the crashed replicas
+     * When the timeout for the ACK on the election message is received, if the
+     * pair is still in the map it means that the replica has not received the
+     * acknowledgement, and so we add it to the crashed replicas.
      */
     private void onElectionAckTimeoutReceivedMsg(ElectionAckReceivedMsg msg) {
         var pair = new AbstractMap.SimpleEntry<>(getSender(), msg.msg.index);
@@ -898,8 +878,8 @@ public class Replica extends AbstractActor {
     }
 
     /**
-     * When receiving the timeout for a coordinator acknowledgment, if the pair is still in the map,
-     * it means that the other replica has crashed.
+     * When receiving the timeout for a coordinator acknowledgment, if the pair
+     * is still in the map, it means that the other replica has crashed.
      */
     private void onCoordinatorAckTimeoutReceivedMsg(CoordinatorAckReceivedMsg msg) {
         var pair = new AbstractMap.SimpleEntry<>(getSender(), msg.msg.index);
