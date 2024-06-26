@@ -112,7 +112,7 @@ public class ReplicaElectionBehaviour {
                 lastWriteForReplica = msg.participants;
                 this.sendSynchronizationMessage();
                 sendLostUpdates();
-                thisReplica.onCoordinatorChange();
+                thisReplica.onCoordinatorChange(thisReplica.getEpoch() + 1);
                 return;
             }
 
@@ -194,7 +194,7 @@ public class ReplicaElectionBehaviour {
         thisReplica.setCoordinatorIndex(thisReplica.getReplicas().indexOf(thisReplica.getSender()));
         var isCoordinator = thisReplica.getReplicaID() == thisReplica.getCoordinatorIndex();
         thisReplica.setIsCoordinator(isCoordinator);
-        thisReplica.onCoordinatorChange();
+        thisReplica.onCoordinatorChange(msg.epoch);
         if (isCoordinator) { // Multicast sends to itself
             thisReplica.getContext().become(thisReplica.createCoordinator());
             // The new coordinator should start sending heartbeat messages, so
@@ -248,7 +248,7 @@ public class ReplicaElectionBehaviour {
         if (nextNode == thisReplica.getSelf()) {
             // There's no other active replica, so this should become the
             // coordinator
-            thisReplica.getSelf().tell(new SynchronizationMsg(), thisReplica.getSelf());
+            thisReplica.getSelf().tell(new SynchronizationMsg(thisReplica.getEpoch() + 1), thisReplica.getSelf());
         } else {
             thisReplica.tellWithDelay(nextNode, msg);
         }
@@ -271,7 +271,7 @@ public class ReplicaElectionBehaviour {
         if (nextNode == thisReplica.getSelf()) {
             // There's no other active replica, so this should become the
             // coordinator
-            thisReplica.getSelf().tell(new SynchronizationMsg(), thisReplica.getSelf());
+            thisReplica.getSelf().tell(new SynchronizationMsg(thisReplica.getEpoch() + 1), thisReplica.getSelf());
         } else {
             thisReplica.tellWithDelay(nextNode, msg);
         }
@@ -281,7 +281,7 @@ public class ReplicaElectionBehaviour {
      * Send the synchronization message to all nodes.
      */
     public void sendSynchronizationMessage() {
-        thisReplica.multicast(new SynchronizationMsg());
+        thisReplica.multicast(new SynchronizationMsg(thisReplica.getEpoch() + 1));
     }
 
     public void setElectionUnderway(boolean b) {
