@@ -11,7 +11,7 @@ public class LoggerTest {
 
     @Test
     public void testLogRead() {
-        Logger.logRead(9, 1);
+        Logger.logRead(9, "replica1");
     }
 
     @Test

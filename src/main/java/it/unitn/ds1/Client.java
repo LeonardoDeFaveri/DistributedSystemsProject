@@ -16,6 +16,7 @@ import it.unitn.ds1.models.administratives.StartMsg;
 import it.unitn.ds1.models.administratives.StopMsg;
 import it.unitn.ds1.models.crash_detection.*;
 import it.unitn.ds1.utils.Delays;
+import it.unitn.ds1.utils.Logger;
 import scala.concurrent.duration.Duration;
 
 public class Client extends AbstractActor {
@@ -174,6 +175,7 @@ public class Client extends AbstractActor {
             getContext().system().dispatcher(),
             getSelf()
         );
+        Logger.logRead(readMessage.id, replica.path().name());
     }
 
     private void onUpdateRequestMsg(UpdateRequestMsg msg) {
@@ -214,6 +216,7 @@ public class Client extends AbstractActor {
                 getSelf().path().name(),
                 this.value
         );
+        Logger.logReadDone(msg.id, msg.value);
     }
 
     private void onReadOkReceivedMsg(ReadOkReceivedMsg msg) {

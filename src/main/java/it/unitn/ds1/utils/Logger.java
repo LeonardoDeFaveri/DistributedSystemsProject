@@ -12,7 +12,7 @@ public class Logger {
         log(String.format("Replica %d update %d:%d %d%n", replicaID, epoch, writeIndex, value));
     }
 
-    public static void logRead(int clientID, int replicaID) {
+    public static void logRead(int clientID, String replicaID) {
         log(String.format("Client %d read req to %d%n", clientID, replicaID));
     }
 
@@ -22,7 +22,7 @@ public class Logger {
 
     private static void log(String message) {
         try {
-            Files.write(Paths.get(FILE_NAME), message.getBytes(), StandardOpenOption.APPEND);
+            Files.write(Paths.get(FILE_NAME), message.getBytes(), StandardOpenOption.APPEND, StandardOpenOption.CREATE);
         } catch (IOException e) {
             e.printStackTrace();
         }
