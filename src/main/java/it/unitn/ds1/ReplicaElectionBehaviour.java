@@ -7,8 +7,10 @@ import it.unitn.ds1.models.administratives.StartMsg;
 import it.unitn.ds1.models.crash_detection.CoordinatorAckReceivedMsg;
 import it.unitn.ds1.models.crash_detection.ElectionAckReceivedMsg;
 import it.unitn.ds1.models.election.*;
+import it.unitn.ds1.models.update.WriteMsg;
 import it.unitn.ds1.utils.Delays;
 import it.unitn.ds1.utils.Utils;
+import it.unitn.ds1.utils.WriteId;
 import scala.concurrent.duration.Duration;
 
 import java.util.*;
@@ -19,7 +21,15 @@ public class ReplicaElectionBehaviour {
     private final List<UpdateRequestMsg> queuedUpdates = new ArrayList<>(); // Queued updates sent when the election was underway
     private final Replica thisReplica; // The replica to which this behaviour belongs
     private boolean isElectionUnderway = false; // Whether an election is currently underway
-    private int electionIndex; // The index of current election being executed
+    /**
+     * For each replica keeps track of its last applied write. ReplicaIDs are
+     * used as keys and values WriteIds.
+     */
+    private Map<Integer, WriteId> lastWriteForReplica = new HashMap<>();
+    /**
+     * Each election is identified by an index. This is necessary for ACKs.
+     */
+    private int electionIndex = 0;
     /**
      * Every ElectionMsg sent must be ACKed. Pairs (sender, index) of the ACK
      * are stored and later checked.
@@ -98,9 +108,9 @@ public class ReplicaElectionBehaviour {
                     thisReplica.getCoordinatorIndex()
             );
             if (thisReplica.getCoordinatorIndex() == thisReplica.getReplicaID()) {
-                thisReplica.setLastWriteForReplica(msg.participants);
+                lastWriteForReplica = msg.participants;
                 this.sendSynchronizationMessage();
-                thisReplica.sendLostUpdates();
+                sendLostUpdates();
                 thisReplica.onCoordinatorChange();
                 return;
             }
@@ -150,9 +160,9 @@ public class ReplicaElectionBehaviour {
             return;
         // This replica is the new coordinator
         if (msg.coordinatorID == thisReplica.getReplicaID()) {
-            thisReplica.setLastWriteForReplica(msg.participants);
+            lastWriteForReplica = msg.participants;
             this.sendSynchronizationMessage();
-            thisReplica.sendLostUpdates();
+            sendLostUpdates();
             return;
         }
         System.out.printf(
@@ -273,5 +283,72 @@ public class ReplicaElectionBehaviour {
 
     public void setElectionUnderway(boolean b) {
         this.isElectionUnderway = b;
+    }
+
+    /**
+     * Sends an ElectionMsg to the next node.
+     */
+    public void sendElectionMessage() {
+        var nextNode = thisReplica.getNextNode();
+        var msg = new ElectionMsg(this.electionIndex, thisReplica.getReplicaID(), thisReplica.getLastWrite());
+        thisReplica.tellWithDelay(nextNode, msg);
+        this.electionIndex++;
+
+        // For each election message the sender expects an ACK back
+        thisReplica.getContext().system().scheduler().scheduleOnce(
+                Duration.create(Delays.ELECTION_ACK_TIMEOUT, TimeUnit.MILLISECONDS),
+                thisReplica.getSelf(),
+                new ElectionAckReceivedMsg(msg),
+                thisReplica.getContext().system().dispatcher(),
+                nextNode
+        );
+    }
+
+    /**
+     * The coordinator, which is the one with the most recent updates, sends all
+     * the missed updates to each replica.
+     */
+    public void sendLostUpdates() {
+        for (var entry : this.lastWriteForReplica.entrySet()) {
+            var replica = thisReplica.getReplicas().get(entry.getKey());
+            var lastUpdate = entry.getValue();
+            var missedUpdatesList = new ArrayList<WriteMsg>();
+            for (int i = lastUpdate.index + 1; i < thisReplica.getLastWrite().index + 1; i++) {
+                var writeId = new WriteId(lastUpdate.epoch, i);
+                var ithRequest = thisReplica.getWriteRequests().get(writeId);
+                missedUpdatesList.add(new WriteMsg(null, writeId, ithRequest));
+            }
+            if (missedUpdatesList.isEmpty())
+                continue;
+            thisReplica.tellWithDelay(replica, new LostUpdatesMsg(missedUpdatesList));
+        }
+    }
+
+    /**
+     * The replica has received the lost updates from the coordinator, so it can
+     * apply them.
+     */
+    public void onLostUpdatesMsg(LostUpdatesMsg msg) {
+        System.out.printf(
+                "[R%d] received %d missed updates, last update: (%d, %d), new updates received: %s\n",
+                thisReplica.getReplicaID(),
+                msg.missedUpdates.size(),
+                thisReplica.getLastWrite().epoch,
+                thisReplica.getLastWrite().index,
+                msg.missedUpdates.stream().map(
+                        update -> String.format(
+                                "(%d, %d)",
+                                update.id.epoch,
+                                update.id.index
+                        )
+                ).collect(Collectors.toList())
+        );
+
+        for (var update : msg.missedUpdates) {
+            thisReplica.setValue(update.value);
+        }
+
+        // Exit the election state and go back to normal
+        thisReplica.getContext().become(thisReplica.createReceive());
     }
 }

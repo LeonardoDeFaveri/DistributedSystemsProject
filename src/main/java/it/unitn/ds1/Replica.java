@@ -25,8 +25,6 @@ import it.unitn.ds1.models.update.*;
 import it.unitn.ds1.utils.*;
 import scala.concurrent.duration.Duration;
 
-import java.util.stream.Collectors;
-
 public class Replica extends AbstractActor {
     static final int CRASH_CHANCES = 100;
 
@@ -85,17 +83,6 @@ public class Replica extends AbstractActor {
      * Index of the write we are currently collecting ACKs for.
      */
     private int currentWriteToAck = 0;
-
-    //=== ELECTION PROTOCOL ====================================================
-    /**
-     * Each election is identified by an index. This is necessary for ACKs.
-     */
-    private int electionIndex = 0;
-    /**
-     * For each replica keeps track of its last applied write. ReplicaIDs are
-     * used as keys and values WriteIds.
-     */
-    private Map<Integer, WriteId> lastWriteForReplica = new HashMap<>();
 
     //=== CRASH DETECTION ======================================================
     /**
@@ -507,73 +494,6 @@ public class Replica extends AbstractActor {
         return replica;
     }
 
-    /**
-     * Sends an ElectionMsg to the next node.
-     */
-    public void sendElectionMessage() {
-        var nextNode = this.getNextNode();
-        var msg = new ElectionMsg(this.electionIndex, this.replicaID, this.lastWrite);
-        this.tellWithDelay(nextNode, msg);
-        this.electionIndex++;
-
-        // For each election message the sender expects an ACK back
-        getContext().system().scheduler().scheduleOnce(
-            Duration.create(Delays.ELECTION_ACK_TIMEOUT, TimeUnit.MILLISECONDS),
-            getSelf(),
-            new ElectionAckReceivedMsg(msg),
-            getContext().system().dispatcher(),
-            nextNode
-        );
-    }
-
-    /**
-     * The coordinator, which is the one with the most recent updates, sends all
-     * the missed updates to each replica.
-     */
-    public void sendLostUpdates() {
-        for (var entry : this.lastWriteForReplica.entrySet()) {
-            var replica = this.replicas.get(entry.getKey());
-            var lastUpdate = entry.getValue();
-            var missedUpdatesList = new ArrayList<WriteMsg>();
-            for (int i = lastUpdate.index + 1; i < this.lastWrite.index + 1; i++) {
-                var writeId = new WriteId(lastUpdate.epoch, i);
-                var ithRequest = this.writeRequests.get(writeId);
-                missedUpdatesList.add(new WriteMsg(null, writeId, ithRequest));
-            }
-            if (missedUpdatesList.isEmpty())
-                continue;
-            this.tellWithDelay(replica, new LostUpdatesMsg(missedUpdatesList));
-        }
-    }
-
-    /**
-     * The replica has received the lost updates from the coordinator, so it can
-     * apply them.
-     */
-    private void onLostUpdatesMsg(LostUpdatesMsg msg) {
-        System.out.printf(
-            "[R%d] received %d missed updates, last update: (%d, %d), new updates received: %s\n",
-            this.replicaID,
-            msg.missedUpdates.size(),
-            this.lastWrite.epoch,
-            this.lastWrite.index,
-            msg.missedUpdates.stream().map(
-                update -> String.format(
-                    "(%d, %d)",
-                    update.id.epoch,
-                    update.id.index
-                )
-            ).collect(Collectors.toList())
-        );
-
-        for (var update : msg.missedUpdates) {
-            this.value = update.value;
-        }
-
-        // Exit the election state and go back to normal
-        getContext().become(createReceive());
-    }
-
     //=== HANDLERS FOR CRASH DETECTION MESSAGES ================================
     /**
      * When a CrashMsg is received there's certain chance of actually crashing.
@@ -694,7 +614,7 @@ public class Replica extends AbstractActor {
 
         // Initiate election protocol
         this.beginElection();
-        this.sendElectionMessage();
+        this.electionBehaviour.sendElectionMessage();
     }
 
     //=== SETUP OF MESSAGES HANDLERS ===========================================
@@ -742,8 +662,8 @@ public class Replica extends AbstractActor {
     public AbstractActor.Receive createElection() {
         return receiveBuilder()
                 .match(ReadMsg.class, this::onReadMsg) // The read is served by the replica, so it's the same
-                .match(LostUpdatesMsg.class, this::onLostUpdatesMsg)
                 .match(CrashMsg.class, this::onCrashMsg)
+                .match(LostUpdatesMsg.class, this.electionBehaviour::onLostUpdatesMsg)
                 .match(UpdateRequestMsg.class, this.electionBehaviour::onUpdateRequestMsg)
                 .match(ElectionMsg.class, this.electionBehaviour::onElectionMsg)
                 .match(CoordinatorMsg.class, this.electionBehaviour::onCoordinatorMsg)
@@ -780,10 +700,6 @@ public class Replica extends AbstractActor {
         return coordinatorIndex;
     }
 
-    public void setLastWriteForReplica(Map<Integer, WriteId> lastWriteForReplica) {
-        this.lastWriteForReplica = lastWriteForReplica;
-    }
-
     public WriteId getLastWrite() {
         return lastWrite;
     }
@@ -798,5 +714,13 @@ public class Replica extends AbstractActor {
 
     public Set<ActorRef> getCrashedReplicas() {
         return crashedReplicas;
+    }
+
+    public Map<WriteId, Integer> getWriteRequests() {
+        return writeRequests;
+    }
+
+    public void setValue(int value) {
+        this.value = value;
     }
 }
