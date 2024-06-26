@@ -9,11 +9,11 @@ public class Logger {
     private static final String FILE_NAME = "log.txt";
 
     public static void logUpdate(int replicaID, int epoch, int writeIndex, int value) {
-        log(String.format("Replica %d update %d:%d %d%n", replicaID, epoch, writeIndex, value));
+        log(String.format("Replica %s update %d:%d %d%n", replicaID, epoch, writeIndex, value));
     }
 
     public static void logRead(int clientID, String replicaID) {
-        log(String.format("Client %d read req to %d%n", clientID, replicaID));
+        log(String.format("Client %d read req to %s%n", clientID, replicaID));
     }
 
     public static void logReadDone(int clientID, int value) {
