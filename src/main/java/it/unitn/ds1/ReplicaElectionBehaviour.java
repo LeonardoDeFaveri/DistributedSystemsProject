@@ -3,24 +3,33 @@ package it.unitn.ds1;
 import akka.actor.ActorRef;
 import it.unitn.ds1.models.UpdateRequestMsg;
 import it.unitn.ds1.models.UpdateRequestOkMsg;
-import it.unitn.ds1.models.crash_detection.*;
-import it.unitn.ds1.models.election.CoordinatorMsg;
-import it.unitn.ds1.models.election.ElectionAckMsg;
-import it.unitn.ds1.models.election.ElectionMsg;
+import it.unitn.ds1.models.administratives.StartMsg;
+import it.unitn.ds1.models.crash_detection.CoordinatorAckReceivedMsg;
+import it.unitn.ds1.models.crash_detection.ElectionAckReceivedMsg;
+import it.unitn.ds1.models.election.*;
 import it.unitn.ds1.utils.Delays;
 import it.unitn.ds1.utils.Utils;
 import scala.concurrent.duration.Duration;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 public class ReplicaElectionBehaviour {
-    private final List<UpdateRequestMsg> queuedUpdates = new ArrayList<>();
-    private final Replica thisReplica;
-    private boolean isElectionUnderway = false;
-    private int electionIndex;
+    private final List<UpdateRequestMsg> queuedUpdates = new ArrayList<>(); // Queued updates sent when the election was underway
+    private final Replica thisReplica; // The replica to which this behaviour belongs
+    private boolean isElectionUnderway = false; // Whether an election is currently underway
+    private int electionIndex; // The index of current election being executed
+    /**
+     * Every ElectionMsg sent must be ACKed. Pairs (sender, index) of the ACK
+     * are stored and later checked.
+     */
+    private final Set<Map.Entry<ActorRef, Integer>> pendingElectionAcks = new HashSet<>();
+    /**
+     * Every CoordinatorMsg sent must be ACKed. Pairs (sender, index) of the ACK
+     * are stored and later checked.
+     */
+    private final Set<Map.Entry<ActorRef, Integer>> pendingCoordinatorAcks = new HashSet<>();
 
     public ReplicaElectionBehaviour(Replica thisReplica) {
         this.thisReplica = thisReplica;
@@ -33,8 +42,6 @@ public class ReplicaElectionBehaviour {
                 new UpdateRequestOkMsg(msg.id.index)
         );
     }
-
-
 
     public List<UpdateRequestMsg> getQueuedUpdates() {
         return queuedUpdates;
@@ -92,7 +99,7 @@ public class ReplicaElectionBehaviour {
             );
             if (thisReplica.getCoordinatorIndex() == thisReplica.getReplicaID()) {
                 thisReplica.setLastWriteForReplica(msg.participants);
-                thisReplica.sendSynchronizationMessage();
+                this.sendSynchronizationMessage();
                 thisReplica.sendLostUpdates();
                 thisReplica.onCoordinatorChange();
                 return;
@@ -104,6 +111,7 @@ public class ReplicaElectionBehaviour {
                     thisReplica.getReplicaID(),
                     msg.participants
             );
+            this.pendingElectionAcks.add(new AbstractMap.SimpleEntry<>(nextNode, msg.index));
             thisReplica.tellWithDelay(nextNode, coordinatorMsg);
             thisReplica.getContext().system().scheduler().scheduleOnce(
                     Duration.create(Delays.COORDINATOR_ACK_TIMEOUT, TimeUnit.MILLISECONDS),
@@ -118,6 +126,7 @@ public class ReplicaElectionBehaviour {
         // propagate to the next node.
         msg.participants.put(thisReplica.getReplicaID(), thisReplica.getLastWrite());
         thisReplica.tellWithDelay(nextNode, msg);
+        this.pendingElectionAcks.add(new AbstractMap.SimpleEntry<>(nextNode, msg.index));
         thisReplica.getContext().system().scheduler().scheduleOnce(
                 Duration.create(Delays.ELECTION_ACK_TIMEOUT, TimeUnit.MILLISECONDS),
                 thisReplica.getSelf(),
@@ -125,5 +134,144 @@ public class ReplicaElectionBehaviour {
                 thisReplica.getContext().system().dispatcher(),
                 nextNode
         );
+    }
+
+    /**
+     * The Election message has been received by all the nodes, and the
+     * coordinator has been elected. The coordinator sends a message to all the
+     * nodes to synchronize the epoch and the writeIndex.
+     */
+    public void onCoordinatorMsg(CoordinatorMsg msg) {
+        thisReplica.tellWithDelay(thisReplica.getSender(), new CoordinatorAckMsg(msg.index));
+
+        // The replica is the sender of the message, so it already has the
+        // coordinator index
+        if (msg.senderID == thisReplica.getReplicaID())
+            return;
+        // This replica is the new coordinator
+        if (msg.coordinatorID == thisReplica.getReplicaID()) {
+            thisReplica.setLastWriteForReplica(msg.participants);
+            this.sendSynchronizationMessage();
+            thisReplica.sendLostUpdates();
+            return;
+        }
+        System.out.printf(
+                "[R%d] received new coordinator %d from %d%n",
+                thisReplica.getReplicaID(), msg.coordinatorID, msg.senderID
+        );
+        thisReplica.setCoordinatorIndex(msg.coordinatorID); // Set the new coordinator
+
+        ActorRef nextNode = thisReplica.getNextNode();
+        // Forward the message to the next node
+        thisReplica.tellWithDelay(nextNode, msg);
+
+        this.pendingCoordinatorAcks.add(new AbstractMap.SimpleEntry<>(nextNode, msg.index));
+        thisReplica.getContext().system().scheduler().scheduleOnce(
+                Duration.create(Delays.COORDINATOR_ACK_TIMEOUT, TimeUnit.MILLISECONDS),
+                thisReplica.getSelf(),
+                new CoordinatorAckReceivedMsg(msg),
+                thisReplica.getContext().system().dispatcher(),
+                nextNode
+        );
+    }
+
+    /**
+     * The new coordinator has sent the synchronization message, so the replicas
+     * can update their epoch and writeIndex.
+     */
+    public void onSynchronizationMsg(SynchronizationMsg msg) {
+        thisReplica.setCoordinatorIndex(thisReplica.getReplicas().indexOf(thisReplica.getSender()));
+        var isCoordinator = thisReplica.getReplicaID() == thisReplica.getCoordinatorIndex();
+        thisReplica.setIsCoordinator(isCoordinator);
+        thisReplica.onCoordinatorChange();
+        if (isCoordinator) { // Multicast sends to itself
+            thisReplica.getContext().become(thisReplica.createCoordinator());
+            // The new coordinator should start sending heartbeat messages, so
+            // it sends itself a start message so that the appropriate timer is
+            // set
+            thisReplica.getSelf().tell(new StartMsg(), thisReplica.getSelf());
+            return;
+        }
+        // Since no there's a new coordinator, the time of last contact must be
+        // reset
+        thisReplica.resetLastContact();
+        System.out.printf(
+                "[R%d] received synchronization message from %d\n",
+                thisReplica.getReplicaID(),
+                thisReplica.getCoordinatorIndex()
+        );
+    }
+
+    /**
+     * When receiving the ACK for the election message sent to the next node in the ring
+     */
+    public void onElectionAckMsg(ElectionAckMsg msg) {
+        var pair = new AbstractMap.SimpleEntry<>(thisReplica.getSender(), msg.index);
+        // The ACK has arrived, so remove it from the set of pending ones
+        this.pendingElectionAcks.remove(pair);
+    }
+
+    public void onCoordinatorAckMsg(CoordinatorAckMsg msg) {
+        var pair = new AbstractMap.SimpleEntry<>(thisReplica.getSender(), msg.index);
+        // The ACK has arrived, so remove it from the set of pending ones
+        this.pendingCoordinatorAcks.remove(pair);
+    }
+
+    /**
+     * When the timeout for the ACK on the election message is received, if the pair is still in the map
+     * it means that the replica has not received the acknowledgement, and so we add it to the crashed replicas
+     */
+    public void onElectionAckTimeoutReceivedMsg(ElectionAckReceivedMsg msg) {
+        var pair = new AbstractMap.SimpleEntry<>(thisReplica.getSender(), msg.msg.index);
+        // If the pair is still in the set, the replica who should have sent the
+        // ACK is probably crashed
+        if (!this.pendingElectionAcks.contains(pair)) {
+            return;
+        }
+
+        thisReplica.getCrashedReplicas().add(thisReplica.getSender());
+        // The election message should be sent again
+        ActorRef nextNode = thisReplica.getNextNode();
+        if (nextNode == thisReplica.getSelf()) {
+            // There's no other active replica, so this should become the
+            // coordinator
+            thisReplica.getSelf().tell(new SynchronizationMsg(), thisReplica.getSelf());
+        } else {
+            thisReplica.tellWithDelay(nextNode, msg);
+        }
+    }
+
+    /**
+     * When receiving the timeout for a coordinator acknowledgment, if the pair is still in the map,
+     * it means that the other replica has crashed.
+     */
+    public void onCoordinatorAckTimeoutReceivedMsg(CoordinatorAckReceivedMsg msg) {
+        var pair = new AbstractMap.SimpleEntry<>(thisReplica.getSender(), msg.msg.index);
+        // If the pair is still in the set, the replica who should have sent the
+        // ACK is probably crashed
+        if (!this.pendingCoordinatorAcks.contains(pair)) {
+            return;
+        }
+
+        // The coordinator message should be sent again
+        ActorRef nextNode = thisReplica.getNextNode();
+        if (nextNode == thisReplica.getSelf()) {
+            // There's no other active replica, so this should become the
+            // coordinator
+            thisReplica.getSelf().tell(new SynchronizationMsg(), thisReplica.getSelf());
+        } else {
+            thisReplica.tellWithDelay(nextNode, msg);
+        }
+    }
+
+    /**
+     * Send the synchronization message to all nodes.
+     */
+    public void sendSynchronizationMessage() {
+        thisReplica.multicast(new SynchronizationMsg());
+    }
+
+    public void setElectionUnderway(boolean b) {
+        this.isElectionUnderway = b;
     }
 }
