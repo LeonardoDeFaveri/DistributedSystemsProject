@@ -1,6 +1,7 @@
-package it.unitn.ds1;
+package it.unitn.ds1.behaviours;
 
 import akka.actor.ActorRef;
+import it.unitn.ds1.Replica;
 import it.unitn.ds1.models.UpdateRequestMsg;
 import it.unitn.ds1.models.UpdateRequestOkMsg;
 import it.unitn.ds1.models.administratives.StartMsg;
