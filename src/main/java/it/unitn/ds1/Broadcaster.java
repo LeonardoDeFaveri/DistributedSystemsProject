@@ -2,16 +2,16 @@ package it.unitn.ds1;
 
 import akka.actor.ActorRef;
 import akka.actor.ActorSystem;
-import it.unitn.ds1.models.JoinGroupMsg;
-import it.unitn.ds1.models.StartMsg;
-import it.unitn.ds1.models.StopMsg;
+import it.unitn.ds1.models.administratives.JoinGroupMsg;
+import it.unitn.ds1.models.administratives.StartMsg;
+import it.unitn.ds1.models.administratives.StopMsg;
 
 import java.io.IOException;
 import java.util.ArrayList;
 
 public class Broadcaster {
-    final static int N_CLIENTS = 5;
-    final static int N_REPLICAS = 5;
+    final static int N_CLIENTS = 2;
+    final static int N_REPLICAS = 4;
 
     public static void main(String[] args) {
         final ActorSystem system = ActorSystem.create("project");
@@ -37,7 +37,13 @@ public class Broadcaster {
         ActorRef crashManager = system.actorOf(CrashManager.props(replicas), "crash_manager");
 
         System.out.print(">>> System ready");
-        requestContinue(system, "send start signal to clients and crash manager");
+        requestContinue(system, "send start signal to all hosts");
+
+        // Send StartMsg to replicas so that they begin sending HeartbeatMsg
+        // (coordinator) and start their timer for heartbeatMsg (replicas)
+        for (ActorRef replica : replicas) {
+            replica.tell(new StartMsg(), ActorRef.noSender());
+        }
 
         // Send StartMsg to clients so that they begin producing requests
         for (ActorRef client : clients) {

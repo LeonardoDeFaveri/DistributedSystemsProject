@@ -4,9 +4,10 @@ import akka.actor.AbstractActor;
 import akka.actor.ActorRef;
 import akka.actor.Cancellable;
 import akka.actor.Props;
-import it.unitn.ds1.models.CrashMsg;
-import it.unitn.ds1.models.CrashResponseMsg;
-import it.unitn.ds1.models.StartMsg;
+import it.unitn.ds1.models.administratives.StartMsg;
+import it.unitn.ds1.models.crash_detection.CrashMsg;
+import it.unitn.ds1.models.crash_detection.CrashResponseMsg;
+import it.unitn.ds1.utils.Delays;
 import scala.concurrent.duration.Duration;
 
 import java.util.ArrayList;
@@ -42,18 +43,18 @@ public class CrashManager extends AbstractActor {
      */
     private ActorRef getReplica() {
         int index = this.numberGenerator.nextInt(this.replicas.size());
-        return this.replicas.get(index);
+        return this.replicas.get(0);
     }
 
     private void onStartMsg(StartMsg msg) {
         System.out.println("[CM] CrashManager started");
 
         if (this.replicas.size() > this.quorum) {
-            // Periodically sends a crash message to self and then redirect it
+            // Periodically sends a crash message to self and then redirects it
             // to a random replica
             this.crashTimer = getContext().system().scheduler().scheduleWithFixedDelay(
-                    Duration.create(1, TimeUnit.SECONDS), // when to start generating messages
-                    Duration.create(2, TimeUnit.SECONDS), // how frequently generate them
+                    Duration.create(Delays.CRASH_WAIT, TimeUnit.MILLISECONDS),
+                    Duration.create(Delays.CRASH_FREQUENCY, TimeUnit.MILLISECONDS),
                     getSelf(), // destination actor reference
                     new CrashMsg(), // the message to send
                     getContext().system().dispatcher(), // system dispatcher
