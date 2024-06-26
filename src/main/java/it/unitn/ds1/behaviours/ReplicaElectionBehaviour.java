@@ -206,6 +206,8 @@ public class ReplicaElectionBehaviour {
         // Since no there's a new coordinator, the time of last contact must be
         // reset
         thisReplica.resetLastContact();
+        // Exit the election state and go back to normal
+        thisReplica.getContext().become(thisReplica.createReceive());
         System.out.printf(
                 "[R%d] received synchronization message from %d\n",
                 thisReplica.getReplicaID(),

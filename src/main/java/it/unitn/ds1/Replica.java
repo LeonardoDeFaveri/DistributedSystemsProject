@@ -488,7 +488,7 @@ public class Replica extends AbstractActor {
         int nextIndex = (currentIndex + 1) % this.replicas.size();
         ActorRef replica = this.replicas.get(nextIndex);
         // Go to the next replica up until it is not crashed
-        while (this.crashedReplicas.contains(replica)) {
+        while (this.crashedReplicas.contains(replica) || nextIndex == coordinatorIndex) {
             nextIndex = (nextIndex + 1) % this.replicas.size();
             replica = this.replicas.get(nextIndex);
         }
