@@ -131,11 +131,6 @@ public class Replica extends AbstractActor {
      */
     private final Map<WriteId, UpdateRequestId> writesToUpdates = new HashMap<>();
     /**
-     * Collects all the update requests received by clients so that they can
-     * be later ACKed when the request has been succesfully served.
-     */
-    private final Set<UpdateRequestId> updateRequests = new HashSet<>();
-    /**
      * Every ElectionMsg sent must be ACKed. Pairs (sender, index) of the ACK
      * are stored and later checked.
      */    
@@ -268,14 +263,8 @@ public class Replica extends AbstractActor {
         // If the request comes from a client, register its arrival.
         // This replica will later have to send an ACK back to this client
         if (!this.replicas.contains(getSender())) {
-            this.updateRequests.add(msg.id);
-            System.out.printf(
-                "[R] Replica %s registered write request %d for %d from client %s\n",
-                getSelf().path().name(),
-                msg.id.index,
-                msg.value,
-                msg.id.client.path().name()
-            );
+            // Immediately inform the client of the receipt of the update request
+            this.tellWithDelay(getSender(), new UpdateRequestOkMsg(msg.id.index));
         }
 
         // This replica is busy electing a new coordinator, so defer the serving
@@ -445,18 +434,6 @@ public class Replica extends AbstractActor {
 
         // Registers the arrival of the ok for a later check
         this.writeOks.add(msg.id);
-
-        // Checks if this replicas has to inform the original client of the
-        // completed update [Must be done regardless of the subsequent check on
-        // request age to avoid wrong crash detection from the client]
-        if (this.updateRequests.contains(msg.updateRequestId)) {
-            this.updateRequests.remove(msg.updateRequestId);
-            // Sends an ACK back to the client
-            this.tellWithDelay(
-                msg.updateRequestId.client,
-                new UpdateRequestOkMsg(msg.updateRequestId.index)
-            );
-        }
 
         // If received message is for a write request older then the last served,
         // ignore it
