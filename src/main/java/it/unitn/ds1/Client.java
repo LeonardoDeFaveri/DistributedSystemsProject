@@ -61,13 +61,6 @@ public class Client extends AbstractActor {
      */
     private Cancellable writeTimer;
 
-    /**
-     * Time to wait before checking for the receipt of an UpdateRequestOkMsg.
-     * Should be used to check for liveness of the replica contacted
-     * for an update read request.
-     */
-    final long UPDATE_REQUEST_OK_TIMEOUT;
-
     private final Random numberGenerator;
 
     public Client(ArrayList<ActorRef> replicas) {
@@ -78,25 +71,6 @@ public class Client extends AbstractActor {
         this.readMsgs = new HashMap<>();
         this.writeMsgs = new HashMap<>();
         this.numberGenerator = new Random(System.nanoTime());
-
-        // Sets timeout to maximum delay
-        // The intuition is that if each message takes up to Delays.MAX_DELAY to
-        // be sent, on an update request we pay this delay on:
-        // - forwarding of request from replica to coordinator
-        // - broadcasting of WriteMsg
-        // - sending of ACK
-        // Then, once enough ACS have been received we pay againg for
-        // - sending of WriteOk
-        // - sending of UpdateRequestOk from replica to client
-        // Since WriteOks are sent one by one to all replicas, the send delays
-        // sums up for each replicas, so the amont of them has to be considered.
-        // To account for the possible execution of the election protocol the
-        // delais for election, coordinator, syncronization and lost update
-        // messages are summed up.
-        this.UPDATE_REQUEST_OK_TIMEOUT =
-            Delays.MAX_DELAY * 3 + Delays.MAX_DELAY * 2 * this.replicas.size() +
-            Delays.MAX_DELAY * this.replicas.size() * 4 +
-            Delays.MAX_DELAY * 5; // For additional safety;
 
         System.out.printf("[C] Client %s created\n", getSelf().path().name());
     }
@@ -187,7 +161,7 @@ public class Client extends AbstractActor {
         replica.tell(updateRequest, getSelf());
 
         getContext().system().scheduler().scheduleOnce(
-            Duration.create(UPDATE_REQUEST_OK_TIMEOUT, TimeUnit.MILLISECONDS),
+            Duration.create(Delays.UPDATE_REQUEST_OK_TIMEOUT, TimeUnit.MILLISECONDS),
             getSelf(),
             new UpdateRequestOkReceivedMsg(updateRequest.id.index),
             getContext().system().dispatcher(),

@@ -5,7 +5,7 @@ package it.unitn.ds1.utils;
  */
 public interface Delays {
     /**
-     * Maximum possible delay for sending of messages.
+     * Maximum possible delay for sending a message.
      */
     final int MAX_DELAY = 100;
     /**
@@ -34,6 +34,12 @@ public interface Delays {
      * read request.
      */
     final long READOK_TIMEOUT = 1000;
+    /**
+     * Time to wait before checking for the receipt of an UpdateRequestOkMsg.
+     * Should be used to check for liveness of the replica contacted
+     * for an update read request.
+     */
+    final long UPDATE_REQUEST_OK_TIMEOUT = 1000;
 
     /**
      * Time to wait before checking for the receipt of and ElectionAckMsg.

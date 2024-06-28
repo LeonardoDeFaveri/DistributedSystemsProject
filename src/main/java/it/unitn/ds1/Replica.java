@@ -209,14 +209,8 @@ public class Replica extends AbstractActor {
         // If the request comes from a client, register its arrival.
         // This replica will later have to send an ACK back to this client
         if (!this.replicas.contains(getSender())) {
-            this.updateRequests.add(msg);
-            System.out.printf(
-                    "[R] Replica %s registered write request %d for %d from client %s\n",
-                    getSelf().path().name(),
-                    msg.id.index,
-                    msg.value,
-                    msg.id.client.path().name()
-            );
+            // Immediately inform the client of the receipt of the update request
+            this.tellWithDelay(getSender(), new UpdateRequestOkMsg(msg.id.index));
         }
 
         // If the replica is not the coordinator
@@ -379,14 +373,6 @@ public class Replica extends AbstractActor {
 
         // Registers the arrival of the ok for a later check
         this.writeOks.add(msg.id);
-
-        // Checks if this replicas has to inform the original client of the
-        // completed update [Must be done regardless of the subsequent check on
-        // request age to avoid wrong crash detection from the client]
-        var updateRequest = this.updateRequests.stream().filter(
-                req -> req.id.equals(msg.updateRequestId)
-        ).findFirst();
-        updateRequest.ifPresent(this.updateRequests::remove);
 
         // If received message is for a write request older then the last served,
         // ignore it
