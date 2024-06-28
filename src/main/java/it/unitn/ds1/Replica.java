@@ -18,6 +18,7 @@ import it.unitn.ds1.models.update.WriteAckMsg;
 import it.unitn.ds1.models.update.WriteMsg;
 import it.unitn.ds1.models.update.WriteOkMsg;
 import it.unitn.ds1.utils.Delays;
+import it.unitn.ds1.utils.Utils;
 import it.unitn.ds1.utils.WriteId;
 import scala.concurrent.duration.Duration;
 
@@ -104,47 +105,34 @@ public class Replica extends AbstractActor {
     //=== Utility methods ======================================================
 
     /**
+     * Multicasts a message to all replicas including itself.
+     *
+     * @param msg The message to send
+     */
+    public void multicast(Serializable msg) {
+        this.multicast(msg, false);
+    }
+
+    /**
+     * Multicasts a message to all replicas, with the option of excluding itself
+     *
+     * @param msg The message to send
+     * @param excludeItself Whether the replica should exclude itself from the multicast or not
+     */
+    public void multicast(Serializable msg, boolean excludeItself) {
+        Utils.multicast(this.replicas, getContext(), getSelf(), msg, excludeItself);
+    }
+
+    /**
      * Sends msg to receiver with a random delay of [0, DELAY)ms.
      *
      * @param receiver receiver of the message
      * @param msg      message to send
      */
     public void tellWithDelay(ActorRef receiver, Serializable msg) {
-        int delay = this.numberGenerator.nextInt(0, Delays.MAX_DELAY);
-        getContext().system().scheduler().scheduleOnce(
-                Duration.create(delay, TimeUnit.MILLISECONDS),
-                receiver,
-                msg,
-                getContext().system().dispatcher(),
-                getSelf()
-        );
+        Utils.tellWithDelay(getContext(), getSelf(), receiver, msg);
     }
 
-    /**
-     * Multicasts a message to all replicas including itself.
-     *
-     * @param msg The message to send
-     */
-    public void multicast(Serializable msg) {
-        multicast(msg, false);
-    }
-
-    /**
-     * Multicasts a message to all replicas, possibly excluding itself.
-     *
-     * @param msg           The message to send
-     * @param excludeItself Whether the replica should exclude itself from
-     *                      the multicast or not
-     */
-    public void multicast(Serializable msg, boolean excludeItself) {
-        var replicas = this.replicas.stream().filter(
-                r -> !excludeItself || r != this.getSelf()
-        ).toList();
-
-        for (ActorRef replica : replicas) {
-            this.tellWithDelay(replica, msg);
-        }
-    }
 
     //=== HANDLERS FOR INITIATION AND TERMINATION MESSAGES =====================
     private void onJoinGroupMsg(JoinGroupMsg msg) {

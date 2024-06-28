@@ -93,7 +93,7 @@ public class Client extends AbstractActor {
      * When a StartMsg is received the client starts producing read and
      * update requests.
      */
-    private void onStartMsg(StartMsg msg) {
+    private void onStartMsg(@SuppressWarnings("unused") StartMsg msg) {
         System.out.printf("[C] Client %s started\n", getSelf().path().name());
 
         // Create a timer that will periodically send READ messages to a replica
@@ -122,7 +122,7 @@ public class Client extends AbstractActor {
      * When a StopMsg is received the client stops producing new requests for
      * replicas.
      */
-    private void onStopMsg(StopMsg msg) {
+    private void onStopMsg(@SuppressWarnings("unused") StopMsg msg) {
         System.out.printf("[C] Client %s stopped\n", getSelf().path().name());
         if (this.readTimer != null) {
             this.readTimer.cancel();
@@ -135,7 +135,7 @@ public class Client extends AbstractActor {
         }
     }
 
-    private void onReadMsg(ReadMsg msg) {
+    private void onReadMsg(@SuppressWarnings("unused") ReadMsg msg) {
         ActorRef replica = this.getRandomReplica();
         ReadMsg readMessage = new ReadMsg(getSender(), this.readIndex++);
         this.readMsgs.putIfAbsent(readMessage.id, replica);
@@ -150,7 +150,7 @@ public class Client extends AbstractActor {
         );
     }
 
-    private void onUpdateRequestMsg(UpdateRequestMsg msg) {
+    private void onUpdateRequestMsg(@SuppressWarnings("unused") UpdateRequestMsg msg) {
         ActorRef replica = this.getRandomReplica();
         UpdateRequestMsg updateRequest = new UpdateRequestMsg(
             getSelf(),
