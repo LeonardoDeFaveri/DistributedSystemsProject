@@ -7,55 +7,55 @@ public interface Delays {
     /**
      * Maximum possible delay for sending a message.
      */
-    final int MAX_DELAY = 100;
+    int MAX_DELAY = 100;
     /**
      * Time to wait before checking for the receipt of a WriteOkMsg.
      */
-    final long WRITEOK_TIMEOUT = 3000;
+    long WRITEOK_TIMEOUT = 3000;
     /**
      * Time to wait before checking for the receipt of a writeMsg.
      */
-    final long WRITEMSG_TIMEOUT = 3000;
+    long WRITEMSG_TIMEOUT = 3000;
     /**
      * Time to wait before sending a new HeartbeatMsg. Should be used by the
      * coordinator to demonstrate is liveness.
      */
-    final long SEND_HEARTBEAT_TIMEOUT = 50;
+    long SEND_HEARTBEAT_TIMEOUT = 50;
     /**
      * Time to wait before sending a new HeartbeatMsg. Should be used by a
      * replica to check when was the last time it was contacted by the
      * coordinator.
      */
-    final long RECEIVE_HEARTBEAT_TIMEOUT = 300;
+    long RECEIVE_HEARTBEAT_TIMEOUT = 300;
 
     /**
      * Time to wait before checking for the receipt of a ReadOkMsg. Should be
      * used by clients to check for liveness of the replica contacted for a
      * read request.
      */
-    final long READOK_TIMEOUT = 1000;
+    long READOK_TIMEOUT = 1000;
     /**
      * Time to wait before checking for the receipt of an UpdateRequestOkMsg.
      * Should be used to check for liveness of the replica contacted
      * for an update read request.
      */
-    final long UPDATE_REQUEST_OK_TIMEOUT = 1000;
+    long UPDATE_REQUEST_OK_TIMEOUT = 1000;
 
     /**
      * Time to wait before checking for the receipt of and ElectionAckMsg.
      */
-    final long ELECTION_ACK_TIMEOUT = 1000;
+    long ELECTION_ACK_TIMEOUT = 1000;
     /**
      * Time to wait before checking for the receipt of a CoordinatorAckMsg.
      */
-    final long COORDINATOR_ACK_TIMEOUT = 1000;
+    long COORDINATOR_ACK_TIMEOUT = 1000;
 
     /**
      * Time to wait before sending the first CrashMsg.
      */
-    final long CRASH_WAIT = 1000;
+    long CRASH_WAIT = 1000;
     /**
      * How often are crash messages sent to replicas?
      */
-    final long CRASH_FREQUENCY = 2000;
+    long CRASH_FREQUENCY = 2000;
 }

@@ -9,11 +9,10 @@ import it.unitn.ds1.models.update.WriteMsg;
 import it.unitn.ds1.models.update.WriteOkMsg;
 import it.unitn.ds1.utils.UpdateRequestId;
 import it.unitn.ds1.utils.WriteId;
+import org.junit.Test;
 
 import java.io.IOException;
 import java.util.ArrayList;
-
-import org.junit.Test;
 
 public class ElectionTest {
     @Test
@@ -63,7 +62,7 @@ public class ElectionTest {
             replicas.get(1).tell(new WriteOkMsg(new WriteId(0, i), new UpdateRequestId(client, i)), null);
         }
         // 3 and 4 have two less updates
-        for (int i = 0; i < values.length - 2; i++ ){
+        for (int i = 0; i < values.length - 2; i++) {
             WriteId id = new WriteId(0, i);
             replicas.get(3).tell(new WriteMsg(new UpdateRequestId(client, i), id, values[i]), null);
             replicas.get(4).tell(new WriteMsg(new UpdateRequestId(client, i), id, values[i]), null);
@@ -75,7 +74,8 @@ public class ElectionTest {
         replicas.get(0).tell(new ElectionMsg(0, 4, new WriteId(0, 2)), replicas.get(4));
 
         // Required to see all output
-        while (replicas.size() > 0) {}
+        while (replicas.size() > 0) {
+        }
 
         System.out.printf(">>> Press ENTER <<<\n");
         try {
