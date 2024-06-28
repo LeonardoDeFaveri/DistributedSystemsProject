@@ -21,16 +21,6 @@ import java.util.stream.Collectors;
 public class ReplicaElectionBehaviour {
     private final List<UpdateRequestMsg> queuedUpdates = new ArrayList<>(); // Queued updates sent when the election was underway
     private final Replica thisReplica; // The replica to which this behaviour belongs
-    private boolean isElectionUnderway = false; // Whether an election is currently underway
-    /**
-     * For each replica keeps track of its last applied write. ReplicaIDs are
-     * used as keys and values WriteIds.
-     */
-    private Map<Integer, WriteId> lastWriteForReplica = new HashMap<>();
-    /**
-     * Each election is identified by an index. This is necessary for ACKs.
-     */
-    private int electionIndex = 0;
     /**
      * Every ElectionMsg sent must be ACKed. Pairs (sender, index) of the ACK
      * are stored and later checked.
@@ -41,6 +31,16 @@ public class ReplicaElectionBehaviour {
      * are stored and later checked.
      */
     private final Set<Map.Entry<ActorRef, Integer>> pendingCoordinatorAcks = new HashSet<>();
+    private boolean isElectionUnderway = false; // Whether an election is currently underway
+    /**
+     * For each replica keeps track of its last applied 'write'. ReplicaIDs are
+     * used as keys and values WriteIds.
+     */
+    private Map<Integer, WriteId> lastWriteForReplica = new HashMap<>();
+    /**
+     * Each election is identified by an index. This is necessary for ACKs.
+     */
+    private int electionIndex = 0;
 
     public ReplicaElectionBehaviour(Replica thisReplica) {
         this.thisReplica = thisReplica;

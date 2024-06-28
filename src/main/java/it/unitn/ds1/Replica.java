@@ -3,6 +3,7 @@ package it.unitn.ds1;
 import akka.actor.AbstractActor;
 import akka.actor.ActorRef;
 import akka.actor.Props;
+import it.unitn.ds1.behaviours.CoordinatorBehaviour;
 import it.unitn.ds1.behaviours.MessageTimeouts;
 import it.unitn.ds1.behaviours.ReplicaElectionBehaviour;
 import it.unitn.ds1.models.ReadMsg;
@@ -17,7 +18,6 @@ import it.unitn.ds1.models.update.WriteAckMsg;
 import it.unitn.ds1.models.update.WriteMsg;
 import it.unitn.ds1.models.update.WriteOkMsg;
 import it.unitn.ds1.utils.Delays;
-import it.unitn.ds1.utils.UpdateRequestId;
 import it.unitn.ds1.utils.WriteId;
 import scala.concurrent.duration.Duration;
 
@@ -38,15 +38,38 @@ public class Replica extends AbstractActor {
     private final Set<ActorRef> crashedReplicas = new HashSet<>();
     private final int replicaID;
     /**
+     * Maps the ID of each WriteMsg received to the value that should be written.
+     */
+    private final Map<WriteId, Integer> writeRequests = new HashMap<>();
+    /**
+     * Keeps momentarily all WriteOks received. They will be later removed on
+     * arrival on WriteOkReceivedMsgs.
+     */
+    private final Set<WriteId> writeOks = new HashSet<>();
+    //=== CRASH DETECTION ======================================================
+    private final MessageTimeouts timeoutsBehaviour = new MessageTimeouts(this);
+    /**
+     * Collects all the update requests received by clients so that they can
+     * be later ACKed when the request has been successfully served.
+     */
+    private final Set<UpdateRequestMsg> updateRequests = new HashSet<>();
+
+    //=== UPDATE PROTOCOL ======================================================
+    /**
+     * The behaviour of the replica during the election
+     */
+    private final ReplicaElectionBehaviour electionBehaviour = new ReplicaElectionBehaviour(this);
+    /**
+     * The behaviour of the replica acting as the coordinator
+     */
+    private final CoordinatorBehaviour coordinatorBehaviour = new CoordinatorBehaviour(this);
+    //=== OTHERS ===============================================================
+    private final Random numberGenerator = new Random(System.nanoTime());
+    /**
      * Index of the coordinator replica inside replicas
      */
     private int coordinatorIndex;
     private boolean isCoordinator = false;
-
-    /**
-     * Minimum number of nodes that must agree on a Write.
-     */
-    private int quorum = 0;
     /**
      * Current value of the replica.
      */
@@ -56,53 +79,11 @@ public class Replica extends AbstractActor {
      */
     private int epoch;
     /**
-     * Index to be used for next WriteMsg created.
-     */
-    private int writeIndex = 0;
-
-    //=== UPDATE PROTOCOL ======================================================
-    /**
      * This is the ID of the last write that was applied. It's necessary to
      * prevent older writes to be applied after newer ones.
      */
     private WriteId lastWrite = new WriteId(-1, -1);
-    /**
-     * For each Write collects ACKs from replicas.
-     */
-    private final Map<WriteId, Set<ActorRef>> writeAcksMap = new HashMap<>();
-    /**
-     * Maps the ID of each WriteMsg received to the value that should be written.
-     */
-    private final Map<WriteId, Integer> writeRequests = new HashMap<>();
-    /**
-     * Keeps momentarily all WriteOks received. They will be later removed on
-     * arrival on WriteOkReceivedMsgs.
-     */
-    private final Set<WriteId> writeOks = new HashSet<>();
-    /**
-     * Index of the write we are currently collecting ACKs for.
-     */
-    private int currentWriteToAck = 0;
 
-    //=== CRASH DETECTION ======================================================
-    private final MessageTimeouts timeoutsBehaviour = new MessageTimeouts(this);
-    /**
-     * Maps the ID of each WriteMsg to the ID of the UpdateRequestMsg that
-     * caused it.
-     */
-    private final Map<WriteId, UpdateRequestId> writesToUpdates = new HashMap<>();
-    /**
-     * Collects all the update requests received by clients so that they can
-     * be later ACKed when the request has been succesfully served.
-     */
-    private final Set<UpdateRequestMsg> updateRequests = new HashSet<>();
-    /**
-     * The behaviour of the replica during the election
-     */
-    private final ReplicaElectionBehaviour electionBehaviour = new ReplicaElectionBehaviour(this);
-
-    //=== OTHERS ===============================================================
-    private final Random numberGenerator = new Random(System.nanoTime());
 
     public Replica(int replicaID, int value, int coordinatorIndex) {
         System.out.printf("[R] Replica %s created with value %d\n", getSelf().path().name(), value);
@@ -139,17 +120,6 @@ public class Replica extends AbstractActor {
         );
     }
 
-    private void tellWithDelay(ActorRef receiver, Serializable msg, ActorRef sender) {
-        int delay = this.numberGenerator.nextInt(0, Delays.MAX_DELAY);
-        getContext().system().scheduler().scheduleOnce(
-                Duration.create(delay, TimeUnit.MILLISECONDS),
-                receiver,
-                msg,
-                getContext().system().dispatcher(),
-                sender
-        );
-    }
-
     /**
      * Multicasts a message to all replicas including itself.
      *
@@ -179,7 +149,7 @@ public class Replica extends AbstractActor {
     //=== HANDLERS FOR INITIATION AND TERMINATION MESSAGES =====================
     private void onJoinGroupMsg(JoinGroupMsg msg) {
         this.replicas.addAll(msg.replicas);
-        this.quorum = (this.replicas.size() / 2); // ! No + 1, because one is itself
+        this.coordinatorBehaviour.setQuorum((this.replicas.size() / 2));
 
         this.isCoordinator = this.replicas.indexOf(this.getSelf()) == this.coordinatorIndex;
         if (this.isCoordinator) {
@@ -211,107 +181,39 @@ public class Replica extends AbstractActor {
         if (!this.replicas.contains(getSender())) {
             // Immediately inform the client of the receipt of the update request
             this.tellWithDelay(getSender(), new UpdateRequestOkMsg(msg.id.index));
+            // Register the request, will be removed when the write is applied
+            this.updateRequests.add(msg);
         }
 
-        // If the replica is not the coordinator
-        if (!this.isCoordinator) {
-            // Send the request to the coordinator
-            var coordinator = this.replicas.get(this.coordinatorIndex);
-            // Sends an ACK back to the client
-            this.tellWithDelay(
-                    msg.id.client,
-                    new UpdateRequestOkMsg(msg.id.index)
-            );
+        // Send the request to the coordinator
+        var coordinator = this.replicas.get(this.coordinatorIndex);
+        // Sends an ACK back to the client
+        this.tellWithDelay(
+                msg.id.client,
+                new UpdateRequestOkMsg(msg.id.index)
+        );
 
-            this.tellWithDelay(coordinator, msg);
+        this.tellWithDelay(coordinator, msg);
 
-            // Registers this updateRequest and waits for the corresponding
-            // WriteMsg from the coordinator
-            this.timeoutsBehaviour.removePendingUpdate(msg.id);
-            // Sets a timeout for the broadcast from the coordinator
-            getContext().system().scheduler().scheduleOnce(
-                    Duration.create(Delays.WRITEMSG_TIMEOUT, TimeUnit.MILLISECONDS),
-                    getSelf(),
-                    new WriteMsgReceivedMsg(msg.id),
-                    getContext().system().dispatcher(),
-                    getSelf()
-            );
-
-            System.out.printf(
-                    "[R] Replica %s forwarded write req to coordinator %s for %d in epoch %d with index %d\n",
-                    getSelf().path().name(),
-                    coordinator.path().name(),
-                    msg.value,
-                    this.epoch,
-                    this.writeIndex
-            );
-
-            this.writeIndex++;
-            return;
-        }
-
-        // The pair associated to the new writeMsg for this update request
-        var writeId = new WriteId(this.epoch, this.writeIndex);
-        // Implement the quorum protocol. The coordinator asks all the replicas
-        // to update
-        multicast(new WriteMsg(msg.id, writeId, msg.value));
-
-        // Associated this write to the update request that caused it
-        this.writesToUpdates.putIfAbsent(writeId, msg.id);
-
-        // Add the new write request to the map, so that the acks can be received
-        this.writeAcksMap.putIfAbsent(writeId, new HashSet<>());
-        this.writeIndex++;
-    }
-
-    /**
-     * When the coordinator receives an ack from a replica
-     */
-    private void onWriteAckMsg(WriteAckMsg msg) {
-        // If the epoch of the write is not the current epoch, ignore the message
-        if (msg.id.epoch != this.epoch)
-            return;
-
-        // The OK has already been sent, as the quorum was reached.
-        // ACKs from other replicas for the same write should be ignored.
-        if (!this.writeAcksMap.containsKey(msg.id)) {
-            return;
-        }
-
-        // Add the sender to the list
-        this.writeAcksMap.get(msg.id).add(getSender());
-
-        // Send all the messages that have been acked in FIFO order!
-        sendAllAckedMessages();
+        // Registers this updateRequest and waits for the corresponding
+        // WriteMsg from the coordinator
+        this.timeoutsBehaviour.removePendingUpdate(msg.id);
+        // Sets a timeout for the broadcast from the coordinator
+        getContext().system().scheduler().scheduleOnce(
+                Duration.create(Delays.WRITEMSG_TIMEOUT, TimeUnit.MILLISECONDS),
+                getSelf(),
+                new WriteMsgReceivedMsg(msg.id),
+                getContext().system().dispatcher(),
+                getSelf()
+        );
 
         System.out.printf(
-                "[Co] Received ack from %s for %d in epoch %d\n",
-                getSender().path().name(),
-                msg.id.index,
-                msg.id.epoch
+                "[R] Replica %s forwarded write req to coordinator %s for %d in epoch %d\n",
+                getSelf().path().name(),
+                coordinator.path().name(),
+                msg.value,
+                this.epoch
         );
-    }
-
-    /**
-     * The first message to be served is the currentWriteToAck index.
-     * When the message is sent to the replicas, serve all the successive messages
-     */
-    private void sendAllAckedMessages() {
-        // Starting from the first message to send, if the quorum has been reached,
-        // send the message. Then, go to the next message (continue until the
-        // last write has been reached).
-        // If any of the writes didn't reach the quorum, stop!
-        while (this.currentWriteToAck < this.writeIndex) {
-            var writeId = new WriteId(this.epoch, this.currentWriteToAck);
-            var updateRequestId = this.writesToUpdates.get(writeId);
-            if (this.writeAcksMap.containsKey(writeId) && this.writeAcksMap.get(writeId).size() >= this.quorum) {
-                multicast(new WriteOkMsg(writeId, updateRequestId));
-                this.writeAcksMap.remove(writeId);
-                this.currentWriteToAck++;
-            } else {
-                break;
-            }
-        }
     }
 
     /**
@@ -374,7 +276,17 @@ public class Replica extends AbstractActor {
         // Registers the arrival of the ok for a later check
         this.writeOks.add(msg.id);
 
-        // If received message is for a write request older then the last served,
+        /*
+          The OK has been received, so the request is removed.
+          If a request has not received the Ok, it means that the coordinator crashed, so the update will be sent
+          to the new coordinator.
+         */
+        var updateMsg = this.updateRequests.stream()
+                .filter(u -> u.id.equals(msg.updateRequestId))
+                .findFirst();
+        updateMsg.ifPresent(this.updateRequests::remove);
+
+        // If received message is for a write request older than the last served,
         // ignore it
         if (msg.id.isPriorOrEqualTo(this.lastWrite)) {
             return;
@@ -428,11 +340,11 @@ public class Replica extends AbstractActor {
      */
     public void onCoordinatorChange(int epoch) {
         this.epoch = epoch;
-        this.writeIndex = 0;
+        this.coordinatorBehaviour.onCoordinatorChange();
         this.electionBehaviour.setElectionUnderway(false);
+        this.updateRequests.forEach(this::onUpdateRequest); // Send all the update requests for which a WriteOk was not received to the new coordinator
         this.electionBehaviour.getQueuedUpdates().forEach(this::onUpdateRequest); // Send all the queued updates to the new coordinator
         this.electionBehaviour.getQueuedUpdates().clear();
-        this.updateRequests.forEach(this::onUpdateRequest); // Send all the update requests for which a WriteOk was not received to the new coordinator
     }
 
     /**
@@ -536,9 +448,9 @@ public class Replica extends AbstractActor {
                 .match(JoinGroupMsg.class, this::onJoinGroupMsg)
                 .match(StartMsg.class, this::onStartMsg)
                 .match(ReadMsg.class, this::onReadMsg)
-                .match(UpdateRequestMsg.class, this::onUpdateRequest)
+                .match(UpdateRequestMsg.class, this.coordinatorBehaviour::onUpdateRequest)
                 .match(HeartbeatMsg.class, this.timeoutsBehaviour::onHeartbeatMsg)
-                .match(WriteAckMsg.class, this::onWriteAckMsg)
+                .match(WriteAckMsg.class, this.coordinatorBehaviour::onWriteAckMsg)
                 .match(WriteMsg.class, this::onWriteMsg)
                 .match(WriteOkMsg.class, this::onWriteOkMsg)
                 .match(CrashMsg.class, this::onCrashMsg)
@@ -581,12 +493,12 @@ public class Replica extends AbstractActor {
         return this.replicaID;
     }
 
-    public void setCoordinatorIndex(int coordinatorIndex) {
-        this.coordinatorIndex = coordinatorIndex;
-    }
-
     public int getCoordinatorIndex() {
         return coordinatorIndex;
+    }
+
+    public void setCoordinatorIndex(int coordinatorIndex) {
+        this.coordinatorIndex = coordinatorIndex;
     }
 
     public WriteId getLastWrite() {
