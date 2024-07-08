@@ -91,8 +91,6 @@ public class Replica extends AbstractActor {
         this.coordinatorIndex = coordinatorIndex;
         this.value = value;
         this.replicaID = replicaID;
-
-        System.out.printf("[R] Replica %s created with value %d\n", getSelf().path().name(), value);
     }
 
     public static Props props(int replicaID, int v, int coordinatorIndex) {
