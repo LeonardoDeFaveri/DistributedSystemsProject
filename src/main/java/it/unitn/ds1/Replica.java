@@ -14,12 +14,9 @@ import it.unitn.ds1.models.administratives.JoinGroupMsg;
 import it.unitn.ds1.models.administratives.StartMsg;
 import it.unitn.ds1.models.crash_detection.*;
 import it.unitn.ds1.models.election.*;
-import it.unitn.ds1.models.update.WriteAckMsg;
-import it.unitn.ds1.models.update.WriteMsg;
-import it.unitn.ds1.models.update.WriteOkMsg;
-import it.unitn.ds1.utils.Delays;
-import it.unitn.ds1.utils.Utils;
-import it.unitn.ds1.utils.WriteId;
+import it.unitn.ds1.models.update.*;
+import it.unitn.ds1.utils.Logger;
+import it.unitn.ds1.utils.*;
 import scala.concurrent.duration.Duration;
 
 import java.io.Serializable;
@@ -282,15 +279,7 @@ public class Replica extends AbstractActor {
         this.value = this.writeRequests.get(msg.id);
         // Update the last write
         this.lastWrite = msg.id;
-
-        System.out.printf(
-                "[R] [%s] Applied the write %d in epoch %d with value %d\n",
-                this.self().path().name(),
-                msg.id.index,
-                msg.id.epoch,
-                this.value
-        );
-
+        Logger.logUpdate(this.replicaID, msg.id.epoch, msg.id.index, this.value);
         this.timeoutsBehaviour.resetLastContact();
     }
 
