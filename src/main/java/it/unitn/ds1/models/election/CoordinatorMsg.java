@@ -12,7 +12,7 @@ public class CoordinatorMsg implements Serializable {
     public final int index;
     public final int coordinatorID;
     public final int senderID;
-    public Map<Integer, WriteId> participants; // Contains pairs (ReplicaID, WriteId)
+    public final Map<Integer, WriteId> participants; // Contains pairs (ReplicaID, WriteId)
 
     public CoordinatorMsg(int index, int coordinatorID, int senderID, Map<Integer, WriteId> participants) {
         this.index = index;
