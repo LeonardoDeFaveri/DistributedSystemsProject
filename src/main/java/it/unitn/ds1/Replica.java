@@ -319,8 +319,11 @@ public class Replica extends AbstractActor {
         this.epoch = epoch;
         this.coordinatorBehaviour.onCoordinatorChange();
         this.electionBehaviour.setElectionUnderway(false);
-        this.updateRequests.forEach(this::onUpdateRequest); // Send all the update requests for which a WriteOk was not received to the new coordinator
-        this.electionBehaviour.getQueuedUpdates().forEach(this::onUpdateRequest); // Send all the queued updates to the new coordinator
+        // Send all the update requests for which a WriteOk was not received to
+        // the new coordinator
+        this.updateRequests.forEach(this::onUpdateRequest);
+        // Send all the queued updates to the new coordinator
+        this.electionBehaviour.getQueuedUpdates().forEach(this::onUpdateRequest);
         this.electionBehaviour.getQueuedUpdates().clear();
     }
 

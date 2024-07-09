@@ -116,6 +116,7 @@ public class ReplicaElectionBehaviour {
                     thisReplica.getCoordinatorIndex()
             );
             if (thisReplica.getCoordinatorIndex() == thisReplica.getReplicaID()) {
+                // This replica is the new coordinator
                 lastWriteForReplica = msg.participants;
                 this.sendSynchronizationMessage();
                 sendLostUpdates();

@@ -91,7 +91,24 @@ public class MessageTimeouts {
     }
 
     /**
-     * Timeout for the WriteMsg. If the pair is still in the map, the replica has not responded in time
+     * When one update is received, adds it to the set of pending updates, i.e.
+     * the set of updates for which a WriteMsg has to be generated.
+     */
+    public void addPendingUpdate(UpdateRequestId updateRequestId) {
+        this.pendingUpdateRequests.add(updateRequestId);
+    }
+
+    /**
+     * When one update is received, remove from the pending updates
+     */
+    public void removePendingUpdate(UpdateRequestId updateRequestId) {
+        this.pendingUpdateRequests.remove(updateRequestId);
+    }
+
+    //=== HANDLERS =============================================================
+    /**
+     * Timeout for the WriteMsg. If the pair is still in the map, the replica
+     * has not responded in time.
      */
     public void onWriteMsgTimeoutReceivedMsg(WriteMsgReceivedMsg msg) {
         if (this.pendingUpdateRequests.contains(msg.updateRequestId)) {
@@ -124,9 +141,17 @@ public class MessageTimeouts {
     }
 
     /**
-     * Timeout for the WriteOk. If the pair is still in the map, the replica has not responded in time
+     * Timeout for the WriteOk. If the pair is still in the map, the replica has
+     * not responded in time.
      */
     public void onWriteOkTimeoutReceivedMsg(WriteOkReceivedMsg msg) {
+        // Ignore WriteOks for messages sent is previous epochs as the crash of
+        // that coordinator has already been detected and the nees to handle
+        // again this message is known
+        if (msg.writeMsgId.epoch < this.thisReplica.getEpoch()) {
+            return;
+        }
+
         if (!thisReplica.getWriteOks().remove(msg.writeMsgId)) {
             // No WriteOk received, coordinator crashed
             thisReplica.recordCoordinatorCrash(
@@ -154,21 +179,7 @@ public class MessageTimeouts {
         }
     }
 
-    /**
-     * When one update is received, adds it to the set of pending updates, i.e.
-     * the set of updates for which a WriteMsg has to be generated.
-     */
-    public void addPendingUpdate(UpdateRequestId updateRequestId) {
-        this.pendingUpdateRequests.add(updateRequestId);
-    }
-
-    /**
-     * When one update is received, remove from the pending updates
-     */
-    public void removePendingUpdate(UpdateRequestId updateRequestId) {
-        this.pendingUpdateRequests.remove(updateRequestId);
-    }
-
+    //=== AUXILIARIES ==========================================================
     private ActorContext getContext() {
         return thisReplica.getContext();
     }

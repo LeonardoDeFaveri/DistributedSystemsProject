@@ -76,9 +76,15 @@ public class Broadcaster {
         var client = system.actorOf(Client.controlledProps(replicas), "client");
         // Creates the actor that will periodically make replicas crash
         ActorRef crashManager = system.actorOf(CrashManager.props(replicas), "crash_manager");
+        
+        // Makes coordinator crash before receiving any request
+        // makeReplicaCrash(crashManager, replicas.get(0));
+        // Thread.sleep(500);
+        // sendUpdateRequest(client, replicas.get(1));
 
+        // Makes coordinator crash before it can send out a WriteOk
         sendUpdateRequest(client, replicas.get(1));
-        Thread.sleep(500);
+        Thread.sleep(100);
         makeReplicaCrash(crashManager, replicas.get(0));
 
         requestContinue(system, "terminate system");
