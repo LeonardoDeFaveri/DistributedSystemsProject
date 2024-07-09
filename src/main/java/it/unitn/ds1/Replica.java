@@ -23,6 +23,7 @@ import it.unitn.ds1.models.administratives.StartMsg;
 import it.unitn.ds1.models.crash_detection.*;
 import it.unitn.ds1.models.election.*;
 import it.unitn.ds1.models.update.*;
+import it.unitn.ds1.utils.Logger;
 import it.unitn.ds1.utils.*;
 import scala.concurrent.duration.Duration;
 
@@ -444,14 +445,7 @@ public class Replica extends AbstractActor {
         // Update the last write
         this.lastWrite = msg.id;
       
-        System.out.printf(
-            "[R] [%s] Applied the write %d in epoch %d with value %d\n",
-            this.self().path().name(),
-            msg.id.index,
-            msg.id.epoch,
-            this.value
-        );
-
+        Logger.logUpdate(this.replicaID, msg.id.epoch, msg.id.index, this.value);
         this.resetLastContact();
     }
 
