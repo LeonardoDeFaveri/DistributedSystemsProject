@@ -43,6 +43,7 @@ public class CoordinatorBehaviour {
         this.thisReplica = thisReplica;
     }
 
+    //=== HANDLERS =============================================================
     public void onUpdateRequest(UpdateRequestMsg msg) {
         // If the request comes from a client, register its arrival.
         // This replica will later have to send an ACK back to this client
@@ -62,28 +63,6 @@ public class CoordinatorBehaviour {
         // Add the new write request to the map, so that the acks can be received
         this.writeAcksMap.putIfAbsent(writeId, new HashSet<>());
         this.writeIndex++;
-    }
-
-    /**
-     * The first message to be served is the currentWriteToAck index.
-     * When the message is sent to the replicas, serve all the successive messages
-     */
-    private void sendAllAckedMessages() {
-        // Starting from the first message to send, if the quorum has been reached,
-        // send the message. Then, go to the next message (continue until the
-        // last write has been reached).
-        // If any of the writes didn't reach the quorum, stop!
-        while (this.currentWriteToAck < this.writeIndex) {
-            var writeId = new WriteId(thisReplica.getEpoch(), this.currentWriteToAck);
-            var updateRequestId = this.writesToUpdates.get(writeId);
-            if (this.writeAcksMap.containsKey(writeId) && this.writeAcksMap.get(writeId).size() >= this.quorum) {
-                thisReplica.multicast(new WriteOkMsg(writeId, updateRequestId));
-                this.writeAcksMap.remove(writeId);
-                this.currentWriteToAck++;
-            } else {
-                break;
-            }
-        }
     }
 
     /**
@@ -112,6 +91,29 @@ public class CoordinatorBehaviour {
                 msg.id.index,
                 msg.id.epoch
         );
+    }
+
+    //=== AUXILIARIES ==========================================================
+    /**
+     * The first message to be served is the currentWriteToAck index.
+     * When the message is sent to the replicas, serve all the successive messages
+     */
+    private void sendAllAckedMessages() {
+        // Starting from the first message to send, if the quorum has been reached,
+        // send the message. Then, go to the next message (continue until the
+        // last write has been reached).
+        // If any of the writes didn't reach the quorum, stop!
+        while (this.currentWriteToAck < this.writeIndex) {
+            var writeId = new WriteId(thisReplica.getEpoch(), this.currentWriteToAck);
+            var updateRequestId = this.writesToUpdates.get(writeId);
+            if (this.writeAcksMap.containsKey(writeId) && this.writeAcksMap.get(writeId).size() >= this.quorum) {
+                thisReplica.multicast(new WriteOkMsg(writeId, updateRequestId));
+                this.writeAcksMap.remove(writeId);
+                this.currentWriteToAck++;
+            } else {
+                break;
+            }
+        }
     }
 
     public void onCoordinatorChange() {

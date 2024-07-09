@@ -19,8 +19,15 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 public class ReplicaElectionBehaviour {
-    private final List<UpdateRequestMsg> queuedUpdates = new ArrayList<>(); // Queued updates sent when the election was underway
-    private final Replica thisReplica; // The replica to which this behaviour belongs
+    /**
+     * The replica to which this behaviour belongs.
+     */
+    private final Replica thisReplica;
+    /**
+     * Updates sent when the election was underway. These are put in the queue
+     * in the order in which they're received.
+     */
+    private final List<UpdateRequestMsg> queuedUpdates = new ArrayList<>();
     /**
      * Every ElectionMsg sent must be ACKed. Pairs (sender, index) of the ACK
      * are stored and later checked.
@@ -31,10 +38,13 @@ public class ReplicaElectionBehaviour {
      * are stored and later checked.
      */
     private final Set<Map.Entry<ActorRef, Integer>> pendingCoordinatorAcks = new HashSet<>();
-    private boolean isElectionUnderway = false; // Whether an election is currently underway
+    /**
+     * Tells whether an election is currenty underway.
+     */
+    private boolean isElectionUnderway = false;
     /**
      * For each replica keeps track of its last applied 'write'. ReplicaIDs are
-     * used as keys and values WriteIds.
+     * used as keys and values are WriteIds.
      */
     private Map<Integer, WriteId> lastWriteForReplica = new HashMap<>();
     /**
@@ -46,16 +56,13 @@ public class ReplicaElectionBehaviour {
         this.thisReplica = thisReplica;
     }
 
+    //=== MESSAGE HANDLERS =====================================================
     public void onUpdateRequestMsg(UpdateRequestMsg msg) {
         queuedUpdates.add(msg);
         thisReplica.tellWithDelay(
                 msg.id.client,
                 new UpdateRequestOkMsg(msg.id.index)
         );
-    }
-
-    public List<UpdateRequestMsg> getQueuedUpdates() {
-        return queuedUpdates;
     }
 
     /**
@@ -216,118 +223,6 @@ public class ReplicaElectionBehaviour {
     }
 
     /**
-     * When receiving the ACK for the election message sent to the next node in the ring
-     */
-    public void onElectionAckMsg(ElectionAckMsg msg) {
-        var pair = new AbstractMap.SimpleEntry<>(thisReplica.getSender(), msg.index);
-        // The ACK has arrived, so remove it from the set of pending ones
-        this.pendingElectionAcks.remove(pair);
-    }
-
-    public void onCoordinatorAckMsg(CoordinatorAckMsg msg) {
-        var pair = new AbstractMap.SimpleEntry<>(thisReplica.getSender(), msg.index);
-        // The ACK has arrived, so remove it from the set of pending ones
-        this.pendingCoordinatorAcks.remove(pair);
-    }
-
-    /**
-     * When the timeout for the ACK on the election message is received, if the pair is still in the map
-     * it means that the replica has not received the acknowledgement, and so we add it to the crashed replicas
-     */
-    public void onElectionAckTimeoutReceivedMsg(ElectionAckReceivedMsg msg) {
-        var pair = new AbstractMap.SimpleEntry<>(thisReplica.getSender(), msg.msg.index);
-        // If the pair is still in the set, the replica who should have sent the
-        // ACK is probably crashed
-        if (!this.pendingElectionAcks.contains(pair)) {
-            return;
-        }
-
-        thisReplica.getCrashedReplicas().add(thisReplica.getSender());
-        // The election message should be sent again
-        ActorRef nextNode = thisReplica.getNextNode();
-        if (nextNode == thisReplica.getSelf()) {
-            // There's no other active replica, so this should become the
-            // coordinator
-            thisReplica.getSelf().tell(new SynchronizationMsg(thisReplica.getEpoch() + 1), thisReplica.getSelf());
-        } else {
-            thisReplica.tellWithDelay(nextNode, msg);
-        }
-    }
-
-    /**
-     * When receiving the timeout for a coordinator acknowledgment, if the pair is still in the map,
-     * it means that the other replica has crashed.
-     */
-    public void onCoordinatorAckTimeoutReceivedMsg(CoordinatorAckReceivedMsg msg) {
-        var pair = new AbstractMap.SimpleEntry<>(thisReplica.getSender(), msg.msg.index);
-        // If the pair is still in the set, the replica who should have sent the
-        // ACK is probably crashed
-        if (!this.pendingCoordinatorAcks.contains(pair)) {
-            return;
-        }
-
-        // The coordinator message should be sent again
-        ActorRef nextNode = thisReplica.getNextNode();
-        if (nextNode == thisReplica.getSelf()) {
-            // There's no other active replica, so this should become the
-            // coordinator
-            thisReplica.getSelf().tell(new SynchronizationMsg(thisReplica.getEpoch() + 1), thisReplica.getSelf());
-        } else {
-            thisReplica.tellWithDelay(nextNode, msg);
-        }
-    }
-
-    /**
-     * Send the synchronization message to all nodes.
-     */
-    public void sendSynchronizationMessage() {
-        thisReplica.multicast(new SynchronizationMsg(thisReplica.getEpoch() + 1));
-    }
-
-    public void setElectionUnderway(boolean b) {
-        this.isElectionUnderway = b;
-    }
-
-    /**
-     * Sends an ElectionMsg to the next node.
-     */
-    public void sendElectionMessage() {
-        var nextNode = thisReplica.getNextNode();
-        var msg = new ElectionMsg(this.electionIndex, thisReplica.getReplicaID(), thisReplica.getLastWrite());
-        thisReplica.tellWithDelay(nextNode, msg);
-        this.electionIndex++;
-
-        // For each election message the sender expects an ACK back
-        thisReplica.getContext().system().scheduler().scheduleOnce(
-                Duration.create(Delays.ELECTION_ACK_TIMEOUT, TimeUnit.MILLISECONDS),
-                thisReplica.getSelf(),
-                new ElectionAckReceivedMsg(msg),
-                thisReplica.getContext().system().dispatcher(),
-                nextNode
-        );
-    }
-
-    /**
-     * The coordinator, which is the one with the most recent updates, sends all
-     * the missed updates to each replica.
-     */
-    public void sendLostUpdates() {
-        for (var entry : this.lastWriteForReplica.entrySet()) {
-            var replica = thisReplica.getReplicas().get(entry.getKey());
-            var lastUpdate = entry.getValue();
-            var missedUpdatesList = new ArrayList<WriteMsg>();
-            for (int i = lastUpdate.index + 1; i < thisReplica.getLastWrite().index + 1; i++) {
-                var writeId = new WriteId(lastUpdate.epoch, i);
-                var ithRequest = thisReplica.getWriteRequests().get(writeId);
-                missedUpdatesList.add(new WriteMsg(null, writeId, ithRequest));
-            }
-            if (missedUpdatesList.isEmpty())
-                continue;
-            thisReplica.tellWithDelay(replica, new LostUpdatesMsg(missedUpdatesList));
-        }
-    }
-
-    /**
      * The replica has received the lost updates from the coordinator, so it can
      * apply them.
      */
@@ -353,5 +248,116 @@ public class ReplicaElectionBehaviour {
 
         // Exit the election state and go back to normal
         thisReplica.getContext().become(thisReplica.createReceive());
+    }
+
+    //=== HANDLERS FOR CRASH DETECTION =========================================
+    /**
+     * When receiving the ACK for the election message sent to the next node in the ring
+     */
+    public void onElectionAckMsg(ElectionAckMsg msg) {
+        var pair = new AbstractMap.SimpleEntry<>(thisReplica.getSender(), msg.index);
+        // The ACK has arrived, so remove it from the set of pending ones
+        this.pendingElectionAcks.remove(pair);
+    }
+
+    public void onCoordinatorAckMsg(CoordinatorAckMsg msg) {
+        var pair = new AbstractMap.SimpleEntry<>(thisReplica.getSender(), msg.index);
+        // The ACK has arrived, so remove it from the set of pending ones
+        this.pendingCoordinatorAcks.remove(pair);
+    }
+
+    /**
+     * When the timeout for the ACK on the election message is received, if the
+     * pair is still in the map it means that the replica has not received the
+     * acknowledgement, so we add it to the crashed replicas.
+     */
+    public void onElectionAckTimeoutReceivedMsg(ElectionAckReceivedMsg msg) {
+        var pair = new AbstractMap.SimpleEntry<>(thisReplica.getSender(), msg.msg.index);
+        // If the pair is still in the set, the replica who should have sent the
+        // ACK is probably crashed
+        if (!this.pendingElectionAcks.contains(pair)) {
+            return;
+        }
+
+        thisReplica.getCrashedReplicas().add(thisReplica.getSender());
+        // The election message should be sent again
+        ActorRef nextNode = thisReplica.getNextNode();
+        thisReplica.tellWithDelay(nextNode, msg);
+    }
+
+    /**
+     * When receiving the timeout for a coordinator acknowledgment, if the pair
+     * is still in the map, it means that the other replica has crashed.
+     */
+    public void onCoordinatorAckTimeoutReceivedMsg(CoordinatorAckReceivedMsg msg) {
+        var pair = new AbstractMap.SimpleEntry<>(thisReplica.getSender(), msg.msg.index);
+        // If the pair is still in the set, the replica who should have sent the
+        // ACK is probably crashed
+        if (!this.pendingCoordinatorAcks.contains(pair)) {
+            return;
+        }
+
+        // The coordinator message should be sent again
+        ActorRef nextNode = thisReplica.getNextNode();
+        thisReplica.tellWithDelay(nextNode, msg);
+    }
+
+    //=== AUXILIARIES ==========================================================
+    /**
+     * Send the synchronization message to all nodes.
+     */
+    public void sendSynchronizationMessage() {
+        thisReplica.multicast(new SynchronizationMsg(thisReplica.getEpoch() + 1));
+    }
+
+    public void setElectionUnderway(boolean b) {
+        this.isElectionUnderway = b;
+    }
+
+    /**
+     * Sends an ElectionMsg to the next node.
+     */
+    public void sendElectionMessage() {
+        var nextNode = thisReplica.getNextNode();
+        var msg = new ElectionMsg(
+            this.electionIndex,
+            thisReplica.getReplicaID(),
+            thisReplica.getLastWrite()
+        );
+        thisReplica.tellWithDelay(nextNode, msg);
+        this.electionIndex++;
+
+        // For each election message the sender expects an ACK back
+        thisReplica.getContext().system().scheduler().scheduleOnce(
+                Duration.create(Delays.ELECTION_ACK_TIMEOUT, TimeUnit.MILLISECONDS),
+                thisReplica.getSelf(),
+                new ElectionAckReceivedMsg(msg),
+                thisReplica.getContext().system().dispatcher(),
+                nextNode
+        );
+    }
+
+    /**
+     * The coordinator, which is the one with the most recent updates, sends all
+     * the missed updates to each replica.
+     */
+    public void sendLostUpdates() {
+        for (var entry : this.lastWriteForReplica.entrySet()) {
+            var replica = thisReplica.getReplicas().get(entry.getKey());
+            var lastUpdate = entry.getValue();
+            var missedUpdatesList = new ArrayList<WriteMsg>();
+            for (int i = lastUpdate.index + 1; i <= thisReplica.getLastWrite().index; i++) {
+                var writeId = new WriteId(lastUpdate.epoch, i);
+                var ithRequest = thisReplica.getWriteRequests().get(writeId);
+                missedUpdatesList.add(new WriteMsg(null, writeId, ithRequest));
+            }
+            if (missedUpdatesList.isEmpty())
+                continue;
+            thisReplica.tellWithDelay(replica, new LostUpdatesMsg(missedUpdatesList));
+        }
+    }
+
+    public List<UpdateRequestMsg> getQueuedUpdates() {
+        return queuedUpdates;
     }
 }

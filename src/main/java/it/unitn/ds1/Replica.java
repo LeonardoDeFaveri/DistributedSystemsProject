@@ -44,6 +44,7 @@ public class Replica extends AbstractActor {
      * arrival on WriteOkReceivedMsgs.
      */
     private final Set<WriteId> writeOks = new HashSet<>();
+    
     //=== CRASH DETECTION ======================================================
     private final MessageTimeouts timeoutsBehaviour = new MessageTimeouts(this);
     /**
@@ -61,6 +62,7 @@ public class Replica extends AbstractActor {
      * The behaviour of the replica acting as the coordinator
      */
     private final CoordinatorBehaviour coordinatorBehaviour = new CoordinatorBehaviour(this);
+
     //=== OTHERS ===============================================================
     private final Random numberGenerator = new Random(System.nanoTime());
     /**
@@ -175,12 +177,12 @@ public class Replica extends AbstractActor {
                 msg.id.client,
                 new UpdateRequestOkMsg(msg.id.index)
         );
-
+        // Forwards the request to the coordinator
         this.tellWithDelay(coordinator, msg);
 
         // Registers this updateRequest and waits for the corresponding
         // WriteMsg from the coordinator
-        this.timeoutsBehaviour.removePendingUpdate(msg.id);
+        this.timeoutsBehaviour.addPendingUpdate(msg.id);
         // Sets a timeout for the broadcast from the coordinator
         getContext().system().scheduler().scheduleOnce(
                 Duration.create(Delays.WRITEMSG_TIMEOUT, TimeUnit.MILLISECONDS),
@@ -205,7 +207,7 @@ public class Replica extends AbstractActor {
     private void onWriteMsg(WriteMsg msg) {
         // Removes this updateRequest from the set of pending ones
         this.timeoutsBehaviour.removePendingUpdate(msg.updateRequestId);
-        // Add the request to the list, so that it is ready if the coordinator
+        // Add the request to the list, so that it's ready if the coordinator
         // requests the update
         this.writeRequests.put(msg.id, msg.value);
         // Send the acknowledgement to the coordinator
@@ -350,11 +352,6 @@ public class Replica extends AbstractActor {
         // Each replica has a 10% chance of crashing
         if (chance >= 10) {
             getSender().tell(new CrashResponseMsg(false), getSelf());
-
-            System.out.printf(
-                    "[R] Replica %s received crash message and DIDN'T CRASH\n",
-                    getSelf().path().name()
-            );
         } else {
             getSender().tell(new CrashResponseMsg(true), getSelf());
             // The replica has crashed and will not respond to messages anymore

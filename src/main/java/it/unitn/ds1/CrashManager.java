@@ -5,6 +5,7 @@ import akka.actor.ActorRef;
 import akka.actor.Cancellable;
 import akka.actor.Props;
 import it.unitn.ds1.models.administratives.StartMsg;
+import it.unitn.ds1.models.controlled.CrashForcedMsg;
 import it.unitn.ds1.models.crash_detection.CrashMsg;
 import it.unitn.ds1.models.crash_detection.CrashResponseMsg;
 import it.unitn.ds1.utils.Delays;
@@ -21,7 +22,7 @@ public class CrashManager extends AbstractActor {
     private final Random numberGenerator;
     private Cancellable crashTimer;
 
-    public CrashManager(List<ActorRef> replicas) {
+    public CrashManager(List<ActorRef> replicas, boolean controlledBehaviour) {
         this.replicas = new ArrayList<>();
         this.replicas.addAll(replicas);
         this.quorum = (this.replicas.size() / 2) + 1;
@@ -32,10 +33,16 @@ public class CrashManager extends AbstractActor {
                 getSelf().path().name(),
                 this.quorum
         );
+
+        getContext().become(this.createControlled());
     }
 
     public static Props props(List<ActorRef> replicas) {
-        return Props.create(CrashManager.class, () -> new CrashManager(replicas));
+        return Props.create(CrashManager.class, () -> new CrashManager(replicas, false));
+    }
+
+    public static Props controlledProps(List<ActorRef> replicas) {
+        return Props.create(CrashManager.class, () -> new CrashManager(replicas, true));
     }
 
     /**
@@ -94,6 +101,34 @@ public class CrashManager extends AbstractActor {
         }
     }
 
+    //=== CONTROLLED BEHAVIOUR =================================================
+    /**
+     * Sends a CrashMsg to a provided replica (it should still be a replica in
+     * the set of known ones). If current behaviour is Controlled, this message
+     * is sent to replica until it crashes. Under normal functioning, it's sent
+     * just one time and that's it.
+     * 
+     * @param replica Replica to be made crash.
+     */
+    private void onCrashMsgForced(CrashForcedMsg msg) {
+        if (this.replicas.contains(msg.replica)) {
+            msg.replica.tell(new CrashMsg(), getSelf());
+        }
+    }
+
+    /**
+     * If the replica hasn't crashed, the CrashMsg is sent again.
+     
+     * @param msg
+     */
+    private void onCrashResponseMsgForced(CrashResponseMsg msg) {
+        if (msg.isCrashed) {
+            this.replicas.remove(getSender());
+        } else {
+            getSender().tell(new CrashMsg(), getSelf());
+        }
+    }
+
     @Override
     public Receive createReceive() {
         return receiveBuilder()
@@ -103,4 +138,10 @@ public class CrashManager extends AbstractActor {
                 .build();
     }
 
+    public Receive createControlled() {
+        return receiveBuilder()
+                .match(CrashForcedMsg.class, this::onCrashMsgForced)
+                .match(CrashResponseMsg.class, this::onCrashResponseMsgForced)
+                .build();
+    }
 }

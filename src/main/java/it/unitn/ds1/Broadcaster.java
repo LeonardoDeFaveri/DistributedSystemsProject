@@ -5,19 +5,20 @@ import akka.actor.ActorSystem;
 import it.unitn.ds1.models.administratives.JoinGroupMsg;
 import it.unitn.ds1.models.administratives.StartMsg;
 import it.unitn.ds1.models.administratives.StopMsg;
+import it.unitn.ds1.models.controlled.CrashForcedMsg;
+import it.unitn.ds1.models.controlled.ReadForcedMsg;
+import it.unitn.ds1.models.controlled.UpdateRequestForcedMsg;
 
 import java.io.IOException;
 import java.util.ArrayList;
 
 public class Broadcaster {
-    final static int N_CLIENTS = 2;
-    final static int N_REPLICAS = 4;
+    final static int N_CLIENTS = 1;
+    final static int N_REPLICAS = 5;
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws InterruptedException {
         final ActorSystem system = ActorSystem.create("project");
-
         final ArrayList<ActorRef> replicas = new ArrayList<>();
-        final ArrayList<ActorRef> clients = new ArrayList<>();
 
         for (int i = 0; i < N_REPLICAS; i++) {
             // Initially the coordinator is the first created replica
@@ -26,13 +27,18 @@ public class Broadcaster {
 
         for (ActorRef replica : replicas) {
             replica.tell(new JoinGroupMsg(replicas), ActorRef.noSender());
+            replica.tell(new StartMsg(), ActorRef.noSender());
         }
+        
+        controlledFunctioning(system, replicas);
+    }
 
+    private static void normalFunctioning(ActorSystem system, ArrayList<ActorRef> replicas) {
+        ArrayList<ActorRef> clients = new ArrayList<>();
         // Creates all the clients that will send UPDATE messages
         for (int i = 0; i < N_CLIENTS; i++) {
             clients.add(system.actorOf(Client.props(replicas), "client" + i));
         }
-
         // Creates the actor that will periodically make replicas crash
         ActorRef crashManager = system.actorOf(CrashManager.props(replicas), "crash_manager");
 
@@ -64,8 +70,20 @@ public class Broadcaster {
         requestContinue(system, "terminate system");
         system.terminate();
         System.out.println(">>> System terminated");
+    }
 
-        // System.out.println("Current java version is " + System.getProperty("java.version"));
+    private static void controlledFunctioning(ActorSystem system, ArrayList<ActorRef> replicas) throws InterruptedException {
+        var client = system.actorOf(Client.controlledProps(replicas), "client");
+        // Creates the actor that will periodically make replicas crash
+        ActorRef crashManager = system.actorOf(CrashManager.props(replicas), "crash_manager");
+
+        sendUpdateRequest(client, replicas.get(1));
+        Thread.sleep(500);
+        makeReplicaCrash(crashManager, replicas.get(0));
+
+        requestContinue(system, "terminate system");
+        system.terminate();
+        System.out.println(">>> System terminated");
     }
 
     private static void requestContinue(ActorSystem system, String msg) {
@@ -81,5 +99,17 @@ public class Broadcaster {
             system.terminate();
             System.exit(1);
         }
+    }
+
+    private static void makeReplicaCrash(ActorRef crashManager, ActorRef replica) {
+        crashManager.tell(new CrashForcedMsg(replica), ActorRef.noSender());
+    }
+
+    private static void sendReadMsg(ActorRef client, ActorRef replica) {
+        client.tell(new ReadForcedMsg(replica), ActorRef.noSender());
+    }
+
+    private static void sendUpdateRequest(ActorRef client, ActorRef replica) {
+        client.tell(new UpdateRequestForcedMsg(replica), ActorRef.noSender());
     }
 }

@@ -14,6 +14,8 @@ import akka.actor.Props;
 import it.unitn.ds1.models.*;
 import it.unitn.ds1.models.administratives.StartMsg;
 import it.unitn.ds1.models.administratives.StopMsg;
+import it.unitn.ds1.models.controlled.ReadForcedMsg;
+import it.unitn.ds1.models.controlled.UpdateRequestForcedMsg;
 import it.unitn.ds1.models.crash_detection.*;
 import it.unitn.ds1.utils.Delays;
 import it.unitn.ds1.utils.Logger;
@@ -64,7 +66,7 @@ public class Client extends AbstractActor {
 
     private final Random numberGenerator;
 
-    public Client(ArrayList<ActorRef> replicas) {
+    public Client(ArrayList<ActorRef> replicas, boolean controlledBehaviour) {
         this.replicas = replicas;
         this.value = 0;
         this.readIndex = 0;
@@ -74,10 +76,18 @@ public class Client extends AbstractActor {
         this.numberGenerator = new Random(System.nanoTime());
 
         System.out.printf("[C] Client %s created\n", getSelf().path().name());
+
+        if (controlledBehaviour) {
+            getContext().become(this.createControlled());
+        }
     }
 
     public static Props props(ArrayList<ActorRef> replicas) {
-        return Props.create(Client.class, () -> new Client(replicas));
+        return Props.create(Client.class, () -> new Client(replicas, false));
+    }
+
+    public static Props controlledProps(ArrayList<ActorRef> replicas) {
+        return Props.create(Client.class, () -> new Client(replicas, true));
     }
 
     /**
@@ -232,6 +242,50 @@ public class Client extends AbstractActor {
         }
     }
 
+    //=== CONTROLLED BEHAVIOUR =================================================
+    private void onReadForcedMsg(ReadForcedMsg msg) {
+        if (!this.replicas.contains(msg.replica)) {
+            return;
+        }
+
+        ReadMsg readMessage = new ReadMsg(getSender(), this.readIndex++);
+        this.readMsgs.putIfAbsent(readMessage.id, msg.replica);
+        msg.replica.tell(readMessage, getSelf());
+
+        getContext().system().scheduler().scheduleOnce(
+            Duration.create(Delays.READOK_TIMEOUT, TimeUnit.MILLISECONDS),
+            getSelf(),
+            new ReadOkReceivedMsg(readMessage.id),
+            getContext().system().dispatcher(),
+            getSelf()
+        );
+        Logger.logRead(readMessage.id, msg.replica.path().name());
+    }
+
+    private void onUpdateRequestForcedMsg(UpdateRequestForcedMsg msg) {
+        if (!this.replicas.contains(msg.replica)) {
+            return;
+        }
+
+        UpdateRequestMsg updateRequest = new UpdateRequestMsg(
+            getSelf(),
+            this.numberGenerator.nextInt(MAX_INT),
+            this.writeIndex
+        );
+        this.writeMsgs.putIfAbsent(updateRequest.id.index, msg.replica);
+        msg.replica.tell(updateRequest, getSelf());
+
+        getContext().system().scheduler().scheduleOnce(
+            Duration.create(Delays.UPDATE_REQUEST_OK_TIMEOUT, TimeUnit.MILLISECONDS),
+            getSelf(),
+            new UpdateRequestOkReceivedMsg(updateRequest.id.index),
+            getContext().system().dispatcher(),
+            getSelf()
+        );
+
+        this.writeIndex++;
+    }
+
     //=== SETUP OF MESSAGES HANDLERS ===========================================
     @Override
     public Receive createReceive() {
@@ -247,4 +301,14 @@ public class Client extends AbstractActor {
                 .build();
     }
 
+    public Receive createControlled() {
+        return receiveBuilder()
+                .match(ReadForcedMsg.class, this::onReadForcedMsg)
+                .match(ReadOkMsg.class, this::onReadOk)
+                .match(ReadOkReceivedMsg.class, this::onReadOkReceivedMsg)
+                .match(UpdateRequestForcedMsg.class, this::onUpdateRequestForcedMsg)
+                .match(UpdateRequestOkMsg.class, this::onUpdateRequestOkMsg)
+                .match(UpdateRequestOkReceivedMsg.class, this::onUpdateRequestOkReceivedMsg)
+                .build();
+    }
 }

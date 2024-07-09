@@ -155,6 +155,14 @@ public class MessageTimeouts {
     }
 
     /**
+     * When one update is received, adds it to the set of pending updates, i.e.
+     * the set of updates for which a WriteMsg has to be generated.
+     */
+    public void addPendingUpdate(UpdateRequestId updateRequestId) {
+        this.pendingUpdateRequests.add(updateRequestId);
+    }
+
+    /**
      * When one update is received, remove from the pending updates
      */
     public void removePendingUpdate(UpdateRequestId updateRequestId) {
