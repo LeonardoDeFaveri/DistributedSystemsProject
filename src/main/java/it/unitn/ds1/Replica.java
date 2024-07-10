@@ -210,15 +210,7 @@ public class Replica extends AbstractActor {
         // Add the request to the list, so that it's ready if the coordinator
         // requests the update
         this.writeRequests.put(msg.id, msg.value);
-        // The expected WriteMsg has been received, so the request is removed.
-        // If a request has not received the WriteMsg, it means that the coordinator
-        // crashed before processing it, so no other replica knows about this
-        // update request, thus it will be forwarded to the new coordinator once
-        // elected
-        var updateMsg = this.updateRequests.stream()
-                .filter(u -> u.id.equals(msg.updateRequestId))
-                .findFirst();
-        updateMsg.ifPresent(this.updateRequests::remove);
+
         // Send the acknowledgement to the coordinator
         this.tellWithDelay(
                 getSender(),
@@ -267,6 +259,16 @@ public class Replica extends AbstractActor {
         // If the pair epoch-index is not in the map, ignore the message
         if (value == null)
             return;
+
+        // The expected WriteOk has been received, so the request is removed.
+        // If a request has not received the WriteMsg, it means that the coordinator
+        // crashed before processing it, so no other replica knows about this
+        // update request, thus it will be forwarded to the new coordinator once
+        // elected
+        var updateMsg = this.updateRequests.stream()
+                .filter(u -> u.id.equals(msg.updateRequestId))
+                .findFirst();
+        updateMsg.ifPresent(this.updateRequests::remove);
 
         // Registers the arrival of the ok for a later check
         this.writeOks.add(msg.id);
@@ -319,23 +321,11 @@ public class Replica extends AbstractActor {
         // Here the new epoch begins
         this.epoch = epoch;
         this.electionBehaviour.setElectionUnderway(false);
-        // Send all the update requests for which a WriteOk was not received to
-        // the new coordinator.
-        this.writeRequests.entrySet().forEach(this::sendRemainingWrite);
-        this.writeRequests.clear();
-        // Send all update request for which a WriteMsg was not received
+        // Send all update request for which a WriteOk was not received
         this.updateRequests.forEach(this::onUpdateRequest);
         // Send all the queued updates to the new coordinator
         this.electionBehaviour.getQueuedUpdates().forEach(this::onUpdateRequest);
         this.electionBehaviour.getQueuedUpdates().clear();
-    }
-
-    /**
-     * Given a pair (writeId, value) builds an UpdateRequest and serves it.
-     */
-    private void sendRemainingWrite(Map.Entry<WriteId, Integer> entry) {
-        UpdateRequestId uid = new UpdateRequestId(ActorRef.noSender(), entry.getKey().index);
-        this.onUpdateRequest(new UpdateRequestMsg(uid, entry.getValue()));
     }
 
     /**

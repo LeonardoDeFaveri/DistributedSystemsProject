@@ -78,14 +78,17 @@ public class Broadcaster {
         ActorRef crashManager = system.actorOf(CrashManager.props(replicas), "crash_manager");
         
         // Makes coordinator crash before receiving any request
-        // makeReplicaCrash(crashManager, replicas.get(0));
-        // Thread.sleep(500);
-        // sendUpdateRequest(client, replicas.get(1));
+        makeReplicaCrash(crashManager, replicas.get(0));
+        Thread.sleep(500);
+        sendUpdateRequest(client, replicas.get(1));
 
         // Makes coordinator crash before it can send out a WriteOk
-        sendUpdateRequest(client, replicas.get(1));
-        Thread.sleep(100);
-        makeReplicaCrash(crashManager, replicas.get(0));
+        //sendUpdateRequest(client, replicas.get(1));
+        //Thread.sleep(100);
+        //makeReplicaCrash(crashManager, replicas.get(0));
+
+        Thread.sleep(5000);
+        sendReadMsg(client, replicas.get(2));
 
         requestContinue(system, "terminate system");
         system.terminate();

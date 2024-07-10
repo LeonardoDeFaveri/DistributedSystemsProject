@@ -4,7 +4,9 @@ import akka.actor.ActorRef;
 import akka.actor.ActorSystem;
 import it.unitn.ds1.models.administratives.JoinGroupMsg;
 import it.unitn.ds1.models.administratives.StartMsg;
-import it.unitn.ds1.models.election.ElectionMsg;
+import it.unitn.ds1.models.controlled.CrashForcedMsg;
+import it.unitn.ds1.models.controlled.ReadForcedMsg;
+import it.unitn.ds1.models.controlled.UpdateRequestForcedMsg;
 import it.unitn.ds1.models.update.WriteMsg;
 import it.unitn.ds1.models.update.WriteOkMsg;
 import it.unitn.ds1.utils.UpdateRequestId;
@@ -16,7 +18,7 @@ import java.util.ArrayList;
 
 public class ElectionTest {
     @Test
-    public void testElection() {
+    public void testElection() throws InterruptedException {
         final ActorSystem system = ActorSystem.create("electionTest");
         final int N_REPLICAS = 5;
 
@@ -32,7 +34,8 @@ public class ElectionTest {
             replica.tell(new StartMsg(), ActorRef.noSender());
         }
 
-        var client = system.actorOf(Client.props(replicas), "client");
+        var client = system.actorOf(Client.controlledProps(replicas), "client");
+        ActorRef crashManager = system.actorOf(CrashManager.controlledProps(replicas), "crash_manager");
 
         var values = new int[]{1, 2, 3, 4, 5};
 
@@ -45,37 +48,51 @@ public class ElectionTest {
         }
 
         // Then, we send the WriteOk selectively
-
-        // 0 has all the updates
+        // 2 has all the updates
         for (int i = 0; i < values.length; i++) {
             WriteId id = new WriteId(0, i);
-            replicas.get(2).tell(new WriteMsg(new UpdateRequestId(client, i), id, values[i]), null);
-            replicas.get(2).tell(new WriteOkMsg(new WriteId(0, i), new UpdateRequestId(client, i)), null);
+            UpdateRequestId uid = new UpdateRequestId(client, i);
+            replicas.get(2).tell(new WriteMsg(uid, id, values[i]), null);
+            replicas.get(2).tell(new WriteOkMsg(new WriteId(0, i), uid), null);
         }
 
-        // 1 and 2 have one less update
+        // 0 and 1 have one less update
         for (int i = 0; i < values.length - 1; i++) {
             WriteId id = new WriteId(0, i);
-            replicas.get(1).tell(new WriteMsg(new UpdateRequestId(client, i), id, values[i]), null);
-            replicas.get(0).tell(new WriteMsg(new UpdateRequestId(client, i), id, values[i]), null);
-            replicas.get(0).tell(new WriteOkMsg(new WriteId(0, i), new UpdateRequestId(client, i)), null);
-            replicas.get(1).tell(new WriteOkMsg(new WriteId(0, i), new UpdateRequestId(client, i)), null);
+            UpdateRequestId uid = new UpdateRequestId(client, i);
+            replicas.get(1).tell(new WriteMsg(uid, id, values[i]), null);
+            replicas.get(0).tell(new WriteMsg(uid, id, values[i]), null);
+            replicas.get(0).tell(new WriteOkMsg(new WriteId(0, i), uid), null);
+            replicas.get(1).tell(new WriteOkMsg(new WriteId(0, i), uid), null);
         }
         // 3 and 4 have two less updates
         for (int i = 0; i < values.length - 2; i++) {
             WriteId id = new WriteId(0, i);
-            replicas.get(3).tell(new WriteMsg(new UpdateRequestId(client, i), id, values[i]), null);
-            replicas.get(4).tell(new WriteMsg(new UpdateRequestId(client, i), id, values[i]), null);
-            replicas.get(4).tell(new WriteOkMsg(new WriteId(0, i), new UpdateRequestId(client, i)), null);
-            replicas.get(3).tell(new WriteOkMsg(new WriteId(0, i), new UpdateRequestId(client, i)), null);
+            UpdateRequestId uid = new UpdateRequestId(client, i);
+            replicas.get(3).tell(new WriteMsg(uid, id, values[i]), null);
+            replicas.get(4).tell(new WriteMsg(uid, id, values[i]), null);
+            replicas.get(4).tell(new WriteOkMsg(new WriteId(0, i), uid), null);
+            replicas.get(3).tell(new WriteOkMsg(new WriteId(0, i), uid), null);
         }
 
         // Then, we start the election algorithm
-        replicas.get(0).tell(new ElectionMsg(0, 0, 4, new WriteId(0, 2)), replicas.get(4));
+        makeReplicaCrash(crashManager, replicas.get(0));
+        
+        Thread.sleep(2000);
+        sendReadMsg(client, replicas.get(1));
+        sendReadMsg(client, replicas.get(2));
+        sendReadMsg(client, replicas.get(3));
+        sendReadMsg(client, replicas.get(4));
+
+        sendUpdateRequest(client, replicas.get(4));
+        Thread.sleep(2000);
+        sendReadMsg(client, replicas.get(1));
+        sendReadMsg(client, replicas.get(2));
+        sendReadMsg(client, replicas.get(3));
+        sendReadMsg(client, replicas.get(4));        
 
         // Required to see all output
-        while (replicas.size() > 0) {
-        }
+        while (replicas.size() > 0) {}
 
         System.out.printf(">>> Press ENTER <<<\n");
         try {
@@ -86,5 +103,17 @@ public class ElectionTest {
             system.terminate();
             System.exit(1);
         }
+    }
+
+    private static void makeReplicaCrash(ActorRef crashManager, ActorRef replica) {
+        crashManager.tell(new CrashForcedMsg(replica), ActorRef.noSender());
+    }
+
+    private static void sendReadMsg(ActorRef client, ActorRef replica) {
+        client.tell(new ReadForcedMsg(replica), ActorRef.noSender());
+    }
+
+    private static void sendUpdateRequest(ActorRef client, ActorRef replica) {
+        client.tell(new UpdateRequestForcedMsg(replica), ActorRef.noSender());
     }
 }

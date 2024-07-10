@@ -116,12 +116,15 @@ public class ReplicaElectionBehaviour {
                 //// set
                 thisReplica.getSelf().tell(new StartMsg(), thisReplica.getSelf());
                 this.sendSynchronizationMessage(msg.participants);
+                System.out.format(
+                    "[Co] %s sent synchronization message\n",
+                    thisReplica.getSelf().path().name()
+                );
                 thisReplica.onCoordinatorChange(thisReplica.getEpoch() + 1);
                 return;
             }
         } else {
-            // If it's an election message, and my ID is not in the list, add my
-            // ID
+            // If my ID is not in the list, add my ID
             msg.participants.put(thisReplica.getReplicaID(), thisReplica.getLastWrite());
         }
 
@@ -165,10 +168,6 @@ public class ReplicaElectionBehaviour {
 
         for (var update : msg.missedUpdates) {
             thisReplica.setValue(update.value);
-            // Removes from the list of incomple updates those that where applied
-            // by the new coordinator and hence have been applied now by this
-            // replica
-            thisReplica.getWriteRequests().remove(update.id);
         }
         // Updates the last write for this replica setting it to the last value
         // in the list (it's ordered).
@@ -177,21 +176,8 @@ public class ReplicaElectionBehaviour {
                 msg.missedUpdates.get(msg.missedUpdates.size() - 1).id
             );
         }
-        
-        // Now, every entry of writeRequests that precedes lastUpdate can be
-        // discarded, since it would be ignored anyway.
-        thisReplica.getWriteRequests().entrySet().removeIf(
-            writeId -> writeId.getKey().isPriorOrEqualTo(thisReplica.getLastWrite())
-        );
-        // Any value still in the list is incomplete. However, since uniform
-        // agreement requires that if any correct replica delivers, all the other
-        // has to do it as well, if any replica had delivered its last update
-        // would have been later than the one of the choosen coordinator. This
-        // means that at this point, no replica has delivere any of the writes
-        // in the list because if any did, it would have been choosen as new
-        // coordinator. Since none delivered, we could just discard these writes
-        // or treat them as request received in the new epoch.
-        // So, now the new epoch can officially begin.
+
+        // Now the new epoch can officially begin.
         thisReplica.getContext().become(thisReplica.createReceive());
         thisReplica.onCoordinatorChange(msg.epoch);
 
