@@ -111,12 +111,20 @@ public class MessageTimeouts {
      * has not responded in time.
      */
     public void onWriteMsgTimeoutReceivedMsg(WriteMsgReceivedMsg msg) {
+        // The coordinator who had to send the message is crashed and now there's
+        // a new one.
+        if (msg.epoch < thisReplica.getEpoch()) {
+            return;
+        }
+
         if (this.pendingUpdateRequests.contains(msg.updateRequestId)) {
             // No WriteMsg received, coordinator crashed
             thisReplica.recordCoordinatorCrash(
-                    String.format("missed WriteMsg for write req %d from %s",
+                    String.format("missed WriteMsg for write req %d in epoch %d made by %s. Current epoch is %d",
                             msg.updateRequestId.index,
-                            msg.updateRequestId.client.path().name()
+                            msg.epoch,
+                            msg.updateRequestId.client.path().name(),
+                            thisReplica.getEpoch()
                     ));
         }
     }
@@ -155,9 +163,10 @@ public class MessageTimeouts {
         if (!thisReplica.getWriteOks().remove(msg.writeMsgId)) {
             // No WriteOk received, coordinator crashed
             thisReplica.recordCoordinatorCrash(
-                    String.format("missed WriteOk for epoch %d index %d",
+                    String.format("missed WriteOk for (%d, %d). Current epoch %d",
                             msg.writeMsgId.epoch,
-                            msg.writeMsgId.index
+                            msg.writeMsgId.index,
+                            thisReplica.getEpoch()
                     ));
         }
     }

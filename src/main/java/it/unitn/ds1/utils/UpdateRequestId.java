@@ -28,11 +28,18 @@ public class UpdateRequestId {
             return false;
         }
 
+        if (this.client == null) {
+            return this.client == other.client && this.index == other.index;
+        }
+
         return this.client.equals(other.client) && this.index == other.index;
     }
 
     @Override
     public int hashCode() {
+        if (this.client == null) {
+            return String.format("0-%d", this.index).hashCode();
+        }
         return String.format("%d-%d", this.client.hashCode(), this.index).hashCode();
     }
 }

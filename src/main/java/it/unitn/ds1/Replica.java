@@ -173,10 +173,10 @@ public class Replica extends AbstractActor {
         // Send the request to the coordinator
         var coordinator = this.replicas.get(this.coordinatorIndex);
         // Sends an ACK back to the client
-        this.tellWithDelay(
-                msg.id.client,
-                new UpdateRequestOkMsg(msg.id.index)
-        );
+        //this.tellWithDelay(
+        //        msg.id.client,
+        //        new UpdateRequestOkMsg(msg.id.index)
+        //);
         // Forwards the request to the coordinator
         this.tellWithDelay(coordinator, msg);
 
@@ -187,7 +187,7 @@ public class Replica extends AbstractActor {
         getContext().system().scheduler().scheduleOnce(
                 Duration.create(Delays.WRITEMSG_TIMEOUT, TimeUnit.MILLISECONDS),
                 getSelf(),
-                new WriteMsgReceivedMsg(msg.id),
+                new WriteMsgReceivedMsg(msg.id, this.epoch),
                 getContext().system().dispatcher(),
                 getSelf()
         );
@@ -210,6 +210,15 @@ public class Replica extends AbstractActor {
         // Add the request to the list, so that it's ready if the coordinator
         // requests the update
         this.writeRequests.put(msg.id, msg.value);
+        // The expected WriteMsg has been received, so the request is removed.
+        // If a request has not received the WriteMsg, it means that the coordinator
+        // crashed before processing it, so no other replica knows about this
+        // update request, thus it will be forwarded to the new coordinator once
+        // elected
+        var updateMsg = this.updateRequests.stream()
+                .filter(u -> u.id.equals(msg.updateRequestId))
+                .findFirst();
+        updateMsg.ifPresent(this.updateRequests::remove);
         // Send the acknowledgement to the coordinator
         this.tellWithDelay(
                 getSender(),
@@ -254,22 +263,13 @@ public class Replica extends AbstractActor {
             // message comes from an already crashed coordinator
             return;
 
+        Integer value = this.writeRequests.get(msg.id);
         // If the pair epoch-index is not in the map, ignore the message
-        if (!this.writeRequests.containsKey(msg.id))
+        if (value == null)
             return;
 
         // Registers the arrival of the ok for a later check
         this.writeOks.add(msg.id);
-
-        /*
-          The OK has been received, so the request is removed.
-          If a request has not received the Ok, it means that the coordinator crashed, so the update will be sent
-          to the new coordinator.
-         */
-        var updateMsg = this.updateRequests.stream()
-                .filter(u -> u.id.equals(msg.updateRequestId))
-                .findFirst();
-        updateMsg.ifPresent(this.updateRequests::remove);
 
         // If received message is for a write request older than the last served,
         // ignore it
@@ -278,7 +278,7 @@ public class Replica extends AbstractActor {
         }
 
         // Apply the write
-        this.value = this.writeRequests.get(msg.id);
+        this.value = value;
         // Update the last write
         this.lastWrite = msg.id;
         Logger.logUpdate(this.replicaID, msg.id.epoch, msg.id.index, this.value);
@@ -316,15 +316,26 @@ public class Replica extends AbstractActor {
      * again from 0.
      */
     public void onCoordinatorChange(int epoch) {
+        // Here the new epoch begins
         this.epoch = epoch;
-        this.coordinatorBehaviour.onCoordinatorChange();
         this.electionBehaviour.setElectionUnderway(false);
         // Send all the update requests for which a WriteOk was not received to
-        // the new coordinator
+        // the new coordinator.
+        this.writeRequests.entrySet().forEach(this::sendRemainingWrite);
+        this.writeRequests.clear();
+        // Send all update request for which a WriteMsg was not received
         this.updateRequests.forEach(this::onUpdateRequest);
         // Send all the queued updates to the new coordinator
         this.electionBehaviour.getQueuedUpdates().forEach(this::onUpdateRequest);
         this.electionBehaviour.getQueuedUpdates().clear();
+    }
+
+    /**
+     * Given a pair (writeId, value) builds an UpdateRequest and serves it.
+     */
+    private void sendRemainingWrite(Map.Entry<WriteId, Integer> entry) {
+        UpdateRequestId uid = new UpdateRequestId(ActorRef.noSender(), entry.getKey().index);
+        this.onUpdateRequest(new UpdateRequestMsg(uid, entry.getValue()));
     }
 
     /**
@@ -336,8 +347,9 @@ public class Replica extends AbstractActor {
         int currentIndex = this.replicas.indexOf(getSelf());
         int nextIndex = (currentIndex + 1) % this.replicas.size();
         ActorRef replica = this.replicas.get(nextIndex);
-        // Go to the next replica up until it is not crashed, or if it has the same index as the coordinator (which has crashed at this point)
-        while (this.crashedReplicas.contains(replica) || nextIndex == coordinatorIndex) {
+        // Go to the next replica up until it is not crashed, or if it has the
+        // same index as the coordinator (which has crashed at this point)
+        while (this.crashedReplicas.contains(replica)) {
             nextIndex = (nextIndex + 1) % this.replicas.size();
             replica = this.replicas.get(nextIndex);
         }
@@ -439,15 +451,11 @@ public class Replica extends AbstractActor {
         return receiveBuilder()
                 .match(ReadMsg.class, this::onReadMsg) // The read is served by the replica, so it's the same
                 .match(CrashMsg.class, this::onCrashMsg)
-                .match(LostUpdatesMsg.class, this.electionBehaviour::onLostUpdatesMsg)
                 .match(UpdateRequestMsg.class, this.electionBehaviour::onUpdateRequestMsg)
                 .match(ElectionMsg.class, this.electionBehaviour::onElectionMsg)
-                .match(CoordinatorMsg.class, this.electionBehaviour::onCoordinatorMsg)
                 .match(SynchronizationMsg.class, this.electionBehaviour::onSynchronizationMsg)
                 .match(ElectionAckMsg.class, this.electionBehaviour::onElectionAckMsg)
-                .match(CoordinatorAckMsg.class, this.electionBehaviour::onCoordinatorAckMsg)
                 .match(ElectionAckReceivedMsg.class, this.electionBehaviour::onElectionAckTimeoutReceivedMsg)
-                .match(CoordinatorAckReceivedMsg.class, this.electionBehaviour::onCoordinatorAckTimeoutReceivedMsg)
                 .build();
     }
 
@@ -460,10 +468,7 @@ public class Replica extends AbstractActor {
                 .build();
     }
 
-    /**
-     * Getter and setters
-     */
-
+    //=== GETTERS & SETTERS ====================================================
     public int getReplicaID() {
         return this.replicaID;
     }
@@ -478,6 +483,10 @@ public class Replica extends AbstractActor {
 
     public WriteId getLastWrite() {
         return lastWrite;
+    }
+
+    public void setLastWrite(WriteId lastWrite) {
+        this.lastWrite = lastWrite;
     }
 
     public List<ActorRef> getReplicas() {
