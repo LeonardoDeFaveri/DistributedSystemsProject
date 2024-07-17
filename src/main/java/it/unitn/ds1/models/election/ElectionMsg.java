@@ -10,10 +10,12 @@ import it.unitn.ds1.utils.WriteId;
  * replicas' IDs and their last update, to decide a new coordinator.
  */
 public class ElectionMsg implements Serializable {
+  public final int endingEpoch;
   public final int index;
   public final Map<Integer, WriteId> participants; // Contains pairs (ReplicaID, LastUpdate)
 
-  public ElectionMsg(int index, int replicaID, WriteId lastUpdate) {
+  public ElectionMsg(int epoch, int index, int replicaID, WriteId lastUpdate) {
+    this.endingEpoch = epoch;
     this.index = index;
     this.participants = new HashMap<>();
     this.participants.put(replicaID, lastUpdate);

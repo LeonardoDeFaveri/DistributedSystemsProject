@@ -91,15 +91,40 @@ public class MessageTimeouts {
     }
 
     /**
-     * Timeout for the WriteMsg. If the pair is still in the map, the replica has not responded in time
+     * When one update is received, adds it to the set of pending updates, i.e.
+     * the set of updates for which a WriteMsg has to be generated.
+     */
+    public void addPendingUpdate(UpdateRequestId updateRequestId) {
+        this.pendingUpdateRequests.add(updateRequestId);
+    }
+
+    /**
+     * When one update is received, remove from the pending updates
+     */
+    public void removePendingUpdate(UpdateRequestId updateRequestId) {
+        this.pendingUpdateRequests.remove(updateRequestId);
+    }
+
+    //=== HANDLERS =============================================================
+    /**
+     * Timeout for the WriteMsg. If the pair is still in the map, the replica
+     * has not responded in time.
      */
     public void onWriteMsgTimeoutReceivedMsg(WriteMsgReceivedMsg msg) {
+        // The coordinator who had to send the message is crashed and now there's
+        // a new one.
+        if (msg.epoch < thisReplica.getEpoch()) {
+            return;
+        }
+
         if (this.pendingUpdateRequests.contains(msg.updateRequestId)) {
             // No WriteMsg received, coordinator crashed
             thisReplica.recordCoordinatorCrash(
-                    String.format("missed WriteMsg for write req %d from %s",
+                    String.format("missed WriteMsg for write req %d in epoch %d made by %s. Current epoch is %d",
                             msg.updateRequestId.index,
-                            msg.updateRequestId.client.path().name()
+                            msg.epoch,
+                            msg.updateRequestId.client.path().name(),
+                            thisReplica.getEpoch()
                     ));
         }
     }
@@ -124,15 +149,24 @@ public class MessageTimeouts {
     }
 
     /**
-     * Timeout for the WriteOk. If the pair is still in the map, the replica has not responded in time
+     * Timeout for the WriteOk. If the pair is still in the map, the replica has
+     * not responded in time.
      */
     public void onWriteOkTimeoutReceivedMsg(WriteOkReceivedMsg msg) {
+        // Ignore WriteOks for messages sent is previous epochs as the crash of
+        // that coordinator has already been detected and the nees to handle
+        // again this message is known
+        if (msg.writeMsgId.epoch < this.thisReplica.getEpoch()) {
+            return;
+        }
+
         if (!thisReplica.getWriteOks().remove(msg.writeMsgId)) {
             // No WriteOk received, coordinator crashed
             thisReplica.recordCoordinatorCrash(
-                    String.format("missed WriteOk for epoch %d index %d",
+                    String.format("missed WriteOk for (%d, %d). Current epoch %d",
                             msg.writeMsgId.epoch,
-                            msg.writeMsgId.index
+                            msg.writeMsgId.index,
+                            thisReplica.getEpoch()
                     ));
         }
     }
@@ -154,21 +188,7 @@ public class MessageTimeouts {
         }
     }
 
-    /**
-     * When one update is received, adds it to the set of pending updates, i.e.
-     * the set of updates for which a WriteMsg has to be generated.
-     */
-    public void addPendingUpdate(UpdateRequestId updateRequestId) {
-        this.pendingUpdateRequests.add(updateRequestId);
-    }
-
-    /**
-     * When one update is received, remove from the pending updates
-     */
-    public void removePendingUpdate(UpdateRequestId updateRequestId) {
-        this.pendingUpdateRequests.remove(updateRequestId);
-    }
-
+    //=== AUXILIARIES ==========================================================
     private ActorContext getContext() {
         return thisReplica.getContext();
     }
