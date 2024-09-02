@@ -8,22 +8,58 @@ import it.unitn.ds1.models.administratives.StopMsg;
 import it.unitn.ds1.models.controlled.CrashForcedMsg;
 import it.unitn.ds1.models.controlled.ReadForcedMsg;
 import it.unitn.ds1.models.controlled.UpdateRequestForcedMsg;
+import it.unitn.ds1.models.election.ElectionAckMsg;
+import it.unitn.ds1.models.election.ElectionMsg;
+import it.unitn.ds1.utils.ElectionId;
+import it.unitn.ds1.utils.KeyEvents;
+import it.unitn.ds1.utils.ProgrammedCrash;
+import it.unitn.ds1.utils.WriteId;
 
 import java.io.IOException;
 import java.util.ArrayList;
 
 public class Broadcaster {
     final static int N_CLIENTS = 1;
-    final static int N_REPLICAS = 5;
+    final static int N_REPLICAS = 3;
 
     public static void main(String[] args) throws InterruptedException {
         final ActorSystem system = ActorSystem.create("project");
         final ArrayList<ActorRef> replicas = new ArrayList<>();
 
+        int value = 0;
+        // Initially the coordinator is the first created replica
+        int coordinatorIndex = 0;
         for (int i = 0; i < N_REPLICAS; i++) {
-            // Initially the coordinator is the first created replica
-            replicas.add(system.actorOf(Replica.props(i, 0, 0), "replica" + i));
+            ProgrammedCrash schedule = new ProgrammedCrash();
+
+            // Program crashes for each replica
+            switch (i) {
+                case 0:
+                    schedule.program(KeyEvents.READ, true, 1);
+                    break;
+                case 1:
+                    //schedule.program(KeyEvents.ELECTION_1, true, 1);
+                    break;
+                case 2:
+                    break;
+                case 3:
+                    break;
+                case 4:
+                    break;
+            }
+
+            replicas.add(system.actorOf(
+                Replica.props(
+                    i,
+                    value,
+                    coordinatorIndex,
+                    schedule
+                ),
+                "replica" + i
+            ));
         }
+
+
 
         for (ActorRef replica : replicas) {
             replica.tell(new JoinGroupMsg(replicas), ActorRef.noSender());
@@ -40,7 +76,7 @@ public class Broadcaster {
             clients.add(system.actorOf(Client.props(replicas), "client" + i));
         }
         // Creates the actor that will periodically make replicas crash
-        ActorRef crashManager = system.actorOf(CrashManager.props(replicas), "crash_manager");
+        //ActorRef crashManager = system.actorOf(CrashManager.props(replicas), "crash_manager");
 
         System.out.print(">>> System ready");
         requestContinue(system, "send start signal to all hosts");
@@ -55,7 +91,7 @@ public class Broadcaster {
         for (ActorRef client : clients) {
             client.tell(new StartMsg(), ActorRef.noSender());
         }
-        crashManager.tell(new StartMsg(), ActorRef.noSender());
+        //crashManager.tell(new StartMsg(), ActorRef.noSender());
 
         System.out.print(">>> System working");
         requestContinue(system, "send stop signal to clients");
@@ -74,21 +110,19 @@ public class Broadcaster {
 
     private static void controlledFunctioning(ActorSystem system, ArrayList<ActorRef> replicas) throws InterruptedException {
         var client = system.actorOf(Client.controlledProps(replicas), "client");
-        // Creates the actor that will periodically make replicas crash
-        ActorRef crashManager = system.actorOf(CrashManager.props(replicas), "crash_manager");
-        
+
         // Makes coordinator crash before receiving any request
-        makeReplicaCrash(crashManager, replicas.get(0));
-        Thread.sleep(500);
-        sendUpdateRequest(client, replicas.get(1));
+        //makeReplicaCrash(crashManager, replicas.get(0));
+        //Thread.sleep(500);
+        //sendUpdateRequest(client, replicas.get(1));
 
         // Makes coordinator crash before it can send out a WriteOk
         //sendUpdateRequest(client, replicas.get(1));
-        //Thread.sleep(100);
-        //makeReplicaCrash(crashManager, replicas.get(0));
+        //Thread.sleep(1000);
+        sendReadMsg(client, replicas.get(0));
 
         Thread.sleep(5000);
-        sendReadMsg(client, replicas.get(2));
+        sendReadMsg(client, replicas.get(1));
 
         requestContinue(system, "terminate system");
         system.terminate();
@@ -96,7 +130,7 @@ public class Broadcaster {
     }
 
     private static void requestContinue(ActorSystem system, String msg) {
-        System.out.printf(">>> Press ENTER to %s <<<\n", msg);
+        System.out.printf(">>> Press ENTER to %s <<<%n", msg);
         try {
             // The loop is necessary to flush the System.in buffer
             do {

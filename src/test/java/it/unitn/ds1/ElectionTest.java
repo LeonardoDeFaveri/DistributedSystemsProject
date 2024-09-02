@@ -9,6 +9,8 @@ import it.unitn.ds1.models.controlled.ReadForcedMsg;
 import it.unitn.ds1.models.controlled.UpdateRequestForcedMsg;
 import it.unitn.ds1.models.update.WriteMsg;
 import it.unitn.ds1.models.update.WriteOkMsg;
+import it.unitn.ds1.utils.KeyEvents;
+import it.unitn.ds1.utils.ProgrammedCrash;
 import it.unitn.ds1.utils.UpdateRequestId;
 import it.unitn.ds1.utils.WriteId;
 import org.junit.Test;
@@ -20,13 +22,38 @@ public class ElectionTest {
     @Test
     public void testElection() throws InterruptedException {
         final ActorSystem system = ActorSystem.create("electionTest");
-        final int N_REPLICAS = 5;
+        final int N_REPLICAS = 7;
 
         final ArrayList<ActorRef> replicas = new ArrayList<>();
+        int value = 0;
+        // Initially the coordinator is the first created replica
+        int coordinatorIndex = 0;
 
         for (int i = 0; i < N_REPLICAS; i++) {
-            // Initially the coordinator is the first created replica
-            replicas.add(system.actorOf(Replica.props(i, 0, 0), "replica" + i));
+            ProgrammedCrash schedule = new ProgrammedCrash();
+
+            // Program crashes for each replica
+            switch (i) {
+                case 0:
+                    break;
+                case 1:
+                    //schedule.program(KeyEvents.ELECTION_1, false, 1);
+                    break;
+                case 2:
+                    //schedule.program(KeyEvents.ELECTION_1, true, 1);
+                    break;
+                case 3:
+                    break;
+                case 4:
+                    break;
+            }
+
+            replicas.add(system.actorOf(Replica.props(
+                i,
+                value,
+                coordinatorIndex,
+                schedule
+            ), "replica" + i));
         }
 
         for (ActorRef replica : replicas) {
@@ -78,7 +105,7 @@ public class ElectionTest {
         // Then, we start the election algorithm
         makeReplicaCrash(crashManager, replicas.get(0));
         
-        Thread.sleep(2000);
+        Thread.sleep(5000);
         sendReadMsg(client, replicas.get(1));
         sendReadMsg(client, replicas.get(2));
         sendReadMsg(client, replicas.get(3));
@@ -94,7 +121,7 @@ public class ElectionTest {
         // Required to see all output
         while (replicas.size() > 0) {}
 
-        System.out.printf(">>> Press ENTER <<<\n");
+        System.out.printf(">>> Press ENTER <<<%n");
         try {
             System.in.read();
         } catch (IOException ioe) {

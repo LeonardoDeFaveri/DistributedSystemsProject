@@ -40,14 +40,30 @@ public class ProgrammedCrash {
     /**
      * The crash should happen before or after the event is served?
      */
-    public boolean isBefore(KeyEvents event) {
+    private boolean isBefore(KeyEvents event) {
         return this.befores.getOrDefault(event, true);
     }
 
     /**
      * Has the event happened enough times to trigger a crash?
      */
-    public boolean isTargetReached(KeyEvents event) {
+    private boolean isTargetReached(KeyEvents event) {
         return this.targets.getOrDefault(event, 1) == 0;
+    }
+
+    /**
+     * Returns true if this replica should crash immediately before serving
+     * this event.
+     */
+    public boolean crashBefore(KeyEvents event) {
+        return this.isTargetReached(event) && this.isBefore(event);
+    }
+
+    /**
+     * Returns true if this replica should crash immediately after serving
+     * this event.
+     */
+    public boolean crashAfter(KeyEvents event) {
+        return this.isTargetReached(event) && !this.isBefore(event);
     }
 }

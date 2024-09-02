@@ -63,8 +63,7 @@ public class Replica extends AbstractActor {
      */
     private final CoordinatorBehaviour coordinatorBehaviour = new CoordinatorBehaviour(this);
 
-    //=== OTHERS ===============================================================
-    private final Random numberGenerator = new Random(System.nanoTime());
+    //=== REPLICA INFO =========================================================
     /**
      * Index of the coordinator replica inside replicas
      */
@@ -84,18 +83,25 @@ public class Replica extends AbstractActor {
      */
     private WriteId lastWrite = new WriteId(-1, -1);
 
+    //=== OTHERS ===============================================================
+    private final Random numberGenerator = new Random(System.nanoTime());
+    /**
+     * All scheduled crashes for this replica.
+     */
+    public final ProgrammedCrash schedule;
 
-    public Replica(int replicaID, int value, int coordinatorIndex) {
-        System.out.printf("[R] Replica %s created with value %d\n", getSelf().path().name(), value);
+    public Replica(int replicaID, int value, int coordinatorIndex, ProgrammedCrash schedule) {
+        System.out.printf("[R] Replica %s created with value %d%n", getSelf().path().name(), value);
         this.coordinatorIndex = coordinatorIndex;
         this.value = value;
         this.replicaID = replicaID;
+        this.schedule = schedule;
     }
 
-    public static Props props(int replicaID, int v, int coordinatorIndex) {
+    public static Props props(int replicaID, int v, int coordinatorIndex, ProgrammedCrash schedule) {
         return Props.create(
                 Replica.class,
-                () -> new Replica(replicaID, v, coordinatorIndex)
+                () -> new Replica(replicaID, v, coordinatorIndex, schedule)
         );
     }
 
@@ -161,6 +167,14 @@ public class Replica extends AbstractActor {
      * When a client sends a request to update the value of the replica
      */
     private void onUpdateRequest(UpdateRequestMsg msg) {
+        KeyEvents event = KeyEvents.UPDATE;
+        this.schedule.register(event);
+
+        if (this.schedule.crashBefore(event)) {
+            this.crash(event, true);
+            return;
+        }
+
         // If the request comes from a client, register its arrival.
         // This replica will later have to send an ACK back to this client
         if (!this.replicas.contains(getSender())) {
@@ -193,18 +207,31 @@ public class Replica extends AbstractActor {
         );
 
         System.out.printf(
-                "[R] Replica %s forwarded write req to coordinator %s for %d in epoch %d\n",
+                "[R] Replica %s forwarded write req to coordinator %s for %d in epoch %d%n",
                 getSelf().path().name(),
                 coordinator.path().name(),
                 msg.value,
                 this.epoch
         );
+        
+        if (this.schedule.crashAfter(event)) {
+            this.crash(event, false);
+            return;
+        }
     }
 
     /**
      * The coordinator is requesting to write a new value to the replicas
      */
     private void onWriteMsg(WriteMsg msg) {
+        KeyEvents event = KeyEvents.WRITE_MSG;
+        this.schedule.register(event);
+
+        if (this.schedule.crashBefore(event)) {
+            this.crash(event, true);
+            return;
+        }
+
         // Removes this updateRequest from the set of pending ones
         this.timeoutsBehaviour.removePendingUpdate(msg.updateRequestId);
         // Add the request to the list, so that it's ready if the coordinator
@@ -218,7 +245,7 @@ public class Replica extends AbstractActor {
         );
 
         System.out.printf(
-                "[R] Write requested by the coordinator %s to %s for %d in epoch %d and index %d\n",
+                "[R] Write requested by the coordinator %s to %s for %d in epoch %d and index %d%n",
                 getSender().path().name(),
                 this.getSelf().path().name(),
                 msg.value,
@@ -242,6 +269,11 @@ public class Replica extends AbstractActor {
 
         // A replica resets its last contact with the coordinator on every message
         this.timeoutsBehaviour.resetLastContact();
+
+        if (this.schedule.crashAfter(event)) {
+            this.crash(event, false);
+            return;
+        }
     }
 
     /**
@@ -249,6 +281,14 @@ public class Replica extends AbstractActor {
      * write
      */
     private void onWriteOkMsg(WriteOkMsg msg) {
+        KeyEvents event = KeyEvents.WRITE_OK;
+        this.schedule.register(event);
+
+        if (this.schedule.crashBefore(event)) {
+            this.crash(event, true);
+            return;
+        }
+
         // If the epoch of the write is not the current epoch, ignore the message
         if (msg.id.epoch != this.epoch)
             // Resetting last contact here would be wrong since the received
@@ -285,6 +325,11 @@ public class Replica extends AbstractActor {
         this.lastWrite = msg.id;
         Logger.logUpdate(this.replicaID, msg.id.epoch, msg.id.index, this.value);
         this.timeoutsBehaviour.resetLastContact();
+
+        if (this.schedule.crashAfter(event)) {
+            this.crash(event, false);
+            return;
+        }
     }
 
     //=== HANDLERS FOR READ REQUEST RELATED MESSAGES ===========================
@@ -293,14 +338,27 @@ public class Replica extends AbstractActor {
      * The client is requesting to read the value of the replica
      */
     private void onReadMsg(ReadMsg msg) {
+        KeyEvents event = KeyEvents.READ;
+        this.schedule.register(event);
+
+        if (this.schedule.crashBefore(event)) {
+            this.crash(event, true);
+            return;
+        }
+
         ActorRef sender = getSender();
         this.tellWithDelay(sender, new ReadOkMsg(this.value, msg.id));
 
         System.out.printf(
-                "[C] Client %s read req to %s\n",
+                "[C] Client %s read req to %s%n",
                 getSender().path().name(),
                 this.getSelf().path().name()
         );
+
+        if (this.schedule.crashAfter(event)) {
+            this.crash(event, false);
+            return;
+        }
     }
 
     //=== METHODS AND HANDLERS FOR THE ELECTION PROTOCOL =======================
@@ -365,10 +423,27 @@ public class Replica extends AbstractActor {
             this.timeoutsBehaviour.stopHeartbeatTimer();
 
             System.out.printf(
-                    "[R] Replica %s received crash message and CRASHED\n",
+                    "[R] Replica %s received crash message and CRASHED%n",
                     getSelf().path().name()
             );
         }
+    }
+
+    /**
+     * Auxiliary method for crashing this replica.
+     */
+    public void crash(KeyEvents event, boolean isBefore) {
+        // The replica has crashed and will not respond to messages anymore
+        getContext().become(createCrashed());
+        // Stop sending heartbeat messages
+        this.timeoutsBehaviour.stopHeartbeatTimer();
+
+        System.out.printf(
+                "[R%d] crashed on event %s %s%n",
+                this.replicaID,
+                event.toString(),
+                (isBefore) ? "before serving it" : "after serving it"
+        );
     }
 
     /**
@@ -377,21 +452,36 @@ public class Replica extends AbstractActor {
      */
     public void recordCoordinatorCrash(String cause) {
         this.crashedReplicas.add(
-                this.replicas.get(this.coordinatorIndex)
+            this.replicas.get(this.coordinatorIndex)
         );
 
         // Stop sending heartbeat received messages
         this.timeoutsBehaviour.stopHeartbeatTimer();
 
         System.out.printf(
-                "[R] Coordinator crash detected by replica %s on %s\n",
-                getSelf().path().name(),
-                cause
+            "[R%d] Coordinator crash detected on %s%n",
+            this.replicaID,
+            cause
         );
 
         // Initiate election protocol
+        KeyEvents event = KeyEvents.ELECTION_1;
+        this.schedule.register(event);
+
+        if (this.schedule.crashBefore(event)) {
+            this.crash(event, true);
+            return;
+        }
+        
         this.beginElection();
         this.electionBehaviour.sendElectionMessage();
+
+        System.out.printf("[R%d] ELECTION STARTED%n", this.replicaID);
+
+        if (this.schedule.crashAfter(event)) {
+            this.crash(event, false);
+            return;
+        }
     }
 
     //=== SETUP OF MESSAGES HANDLERS ===========================================

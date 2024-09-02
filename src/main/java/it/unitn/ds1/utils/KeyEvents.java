@@ -5,14 +5,6 @@ package it.unitn.ds1.utils;
  */
 public enum KeyEvents {
     /**
-     * Actor creation.
-     */
-    CREATION,
-    /**
-     * Receipt of a StartMsg.
-     */
-    START,
-    /**
      * Receipt of a read request.
      */
     READ,
@@ -50,13 +42,9 @@ public enum KeyEvents {
      */
     ELECTION_ACK,
     /**
-     * Another replica has been choosen as coordinator.
-     */
-    COORDINATOR_CHOOSEN,
-    /**
      * This replica has become the new coordinator.
      */
-    COORDINATOR_BECOME,
+    BECOME_COORDINATOR,
     /**
      * Receipt of a Synchronization message
      */
