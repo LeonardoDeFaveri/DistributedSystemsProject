@@ -17,7 +17,6 @@ import scala.concurrent.duration.Duration;
 
 import java.util.*;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
 
 public class ReplicaElectionBehaviour {
     /**
@@ -30,7 +29,7 @@ public class ReplicaElectionBehaviour {
      */
     private final List<UpdateRequestMsg> queuedUpdates = new ArrayList<>();
     /**
-     * Every ElectionMsg sent must be ACKed. Pairs (sender, dlectionId) of the ACK
+     * Every ElectionMsg sent must be ACKed. Pairs (sender, electionId) of the ACK
      * are stored and later checked. During each election the same replica
      * receives two election messages. These have distinct IDs and their ACK
      * as well, so they will figure as distinct elements in the set.
@@ -77,6 +76,7 @@ public class ReplicaElectionBehaviour {
      * then propagate to the next node;
      */
     public void onElectionMsg(ElectionMsg msg) {
+        ElectionMsg nextMsg = msg;
         KeyEvents event;
         if (!msg.participants.containsKey(thisReplica.getReplicaID())) {
             event = KeyEvents.ELECTION_1;
@@ -143,17 +143,17 @@ public class ReplicaElectionBehaviour {
                     return;
                 }
 
-                //// This replica is the new coordinator
+                // This replica is the new coordinator
                 thisReplica.getContext().become(thisReplica.createCoordinator());
-                //// The new coordinator should start sending heartbeat messages, so
-                //// it sends itself a start message so that the appropriate timer is
-                //// set
+                // The new coordinator should start sending heartbeat messages, so
+                // it sends itself a start message so that the appropriate timer is
+                // set
                 thisReplica.getSelf().tell(new StartMsg(), thisReplica.getSelf());
                 this.sendSynchronizationMessage(msg.participants);
-                System.out.format(
-                    "[Co] %s sent synchronization message%n",
-                    thisReplica.getSelf().path().name()
-                );
+                //System.out.format(
+                //    "[Co] %s sent synchronization message%n",
+                //    thisReplica.getSelf().path().name()
+                //);
                 thisReplica.onCoordinatorChange(thisReplica.getEpoch() + 1);
 
                 if (this.thisReplica.schedule.crashAfter(event)) {
@@ -163,14 +163,10 @@ public class ReplicaElectionBehaviour {
             }
 
             // If this replica has received this election message for the
-            // second time and it's not the new coordinator, the election message
-            // is in its second round.
-            if (msg.id.isFirstRound) {
-                // The message is changed to a second round one
-                msg = new ElectionMsg(msg);
-                System.out.printf("[R%d] (%d,%d,%d)%n", thisReplica.getReplicaID(), msg.id.epoch, msg.id.initiator, (msg.id.isFirstRound) ? 1 : 2);
-                System.out.printf("[R%d] Election passed on second round%n", thisReplica.getReplicaID());
-            }
+            // second time and this replica is not the new coordinator, then the
+            // election message must begin its second round.
+            nextMsg = new ElectionMsg(msg);
+            System.out.printf("[R%d] Election passed on second round%n", thisReplica.getReplicaID());
         } else {
             // If my ID is not in the list, add my ID
             msg.participants.put(thisReplica.getReplicaID(), thisReplica.getLastWrite());
@@ -178,13 +174,13 @@ public class ReplicaElectionBehaviour {
 
         // The election message is propagated because either I've just added my
         // ID or the ID was already in the message, but I'm not the new coordinator
-        thisReplica.tellWithDelay(nextNode, msg);
-        var pair = new AbstractMap.SimpleEntry<>(nextNode, msg.id);
+        thisReplica.tellWithDelay(nextNode, nextMsg);
+        var pair = new AbstractMap.SimpleEntry<>(nextNode, nextMsg.id);
         this.pendingElectionAcks.add(pair);
         thisReplica.getContext().system().scheduler().scheduleOnce(
                 Duration.create(Delays.ELECTION_ACK_TIMEOUT, TimeUnit.MILLISECONDS),
                 thisReplica.getSelf(),
-                new ElectionAckReceivedMsg(msg),
+                new ElectionAckReceivedMsg(nextMsg),
                 thisReplica.getContext().system().dispatcher(),
                 nextNode
         );
@@ -213,20 +209,20 @@ public class ReplicaElectionBehaviour {
         // Since no there's a new coordinator, the time of last contact must be
         // reset
         thisReplica.resetLastContact();
-        System.out.printf(
-                "[R%d] received synchronization message from %d " + 
-                "together with %d missed updates: %s%n",
-                thisReplica.getReplicaID(),
-                thisReplica.getCoordinatorIndex(),
-                msg.missedUpdates.size(),
-                msg.missedUpdates.stream().map(
-                        update -> String.format(
-                                "(%d, %d)",
-                                update.id.epoch,
-                                update.id.index
-                        )
-                ).collect(Collectors.toList())
-        );
+        //System.out.printf(
+        //        "[R%d] received synchronization message from %d " + 
+        //        "together with %d missed updates: %s%n",
+        //        thisReplica.getReplicaID(),
+        //        thisReplica.getCoordinatorIndex(),
+        //        msg.missedUpdates.size(),
+        //        msg.missedUpdates.stream().map(
+        //                update -> String.format(
+        //                        "(%d, %d)",
+        //                        update.id.epoch,
+        //                        update.id.index
+        //                )
+        //        ).collect(Collectors.toList())
+        //);
 
         for (var update : msg.missedUpdates) {
             thisReplica.setValue(update.value);
@@ -284,7 +280,7 @@ public class ReplicaElectionBehaviour {
      * pair is still in the map it means that the replica has not received the
      * acknowledgement, so we add it to the crashed replicas.
      */
-    public void onElectionAckTimeoutReceivedMsg(ElectionAckReceivedMsg msg) {
+    public void onElectionAckReceivedMsg(ElectionAckReceivedMsg msg) {
         var pair = new AbstractMap.SimpleEntry<>(thisReplica.getSender(), msg.msg.id);
         // If the pair is not in the set the ACK has arrived, so everything is
         //fine
@@ -298,7 +294,7 @@ public class ReplicaElectionBehaviour {
 
         // The election message should be sent again
         ActorRef nextNode = thisReplica.getNextNode();
-        thisReplica.tellWithDelay(nextNode, msg);
+        thisReplica.tellWithDelay(nextNode, msg.msg);
         this.pendingElectionAcks.add(new AbstractMap.SimpleEntry<>(nextNode, msg.msg.id));
         thisReplica.getContext().system().scheduler().scheduleOnce(
                 Duration.create(Delays.ELECTION_ACK_TIMEOUT, TimeUnit.MILLISECONDS),

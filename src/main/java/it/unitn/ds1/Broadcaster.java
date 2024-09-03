@@ -8,19 +8,15 @@ import it.unitn.ds1.models.administratives.StopMsg;
 import it.unitn.ds1.models.controlled.CrashForcedMsg;
 import it.unitn.ds1.models.controlled.ReadForcedMsg;
 import it.unitn.ds1.models.controlled.UpdateRequestForcedMsg;
-import it.unitn.ds1.models.election.ElectionAckMsg;
-import it.unitn.ds1.models.election.ElectionMsg;
-import it.unitn.ds1.utils.ElectionId;
 import it.unitn.ds1.utils.KeyEvents;
 import it.unitn.ds1.utils.ProgrammedCrash;
-import it.unitn.ds1.utils.WriteId;
 
 import java.io.IOException;
 import java.util.ArrayList;
 
 public class Broadcaster {
     final static int N_CLIENTS = 1;
-    final static int N_REPLICAS = 3;
+    final static int N_REPLICAS = 4;
 
     public static void main(String[] args) throws InterruptedException {
         final ActorSystem system = ActorSystem.create("project");
@@ -35,10 +31,11 @@ public class Broadcaster {
             // Program crashes for each replica
             switch (i) {
                 case 0:
-                    schedule.program(KeyEvents.READ, true, 1);
+                    // Sends OKs and crashes
+                    schedule.program(KeyEvents.WRITE_ACK_ALL, true, 1);
                     break;
                 case 1:
-                    //schedule.program(KeyEvents.ELECTION_1, true, 1);
+                    schedule.program(KeyEvents.ELECTION_1, true, 1);
                     break;
                 case 2:
                     break;
@@ -117,15 +114,16 @@ public class Broadcaster {
         //sendUpdateRequest(client, replicas.get(1));
 
         // Makes coordinator crash before it can send out a WriteOk
-        //sendUpdateRequest(client, replicas.get(1));
+        sendUpdateRequest(client, replicas.get(1));
         //Thread.sleep(1000);
-        sendReadMsg(client, replicas.get(0));
+        //sendReadMsg(client, replicas.get(0));
 
         Thread.sleep(5000);
         sendReadMsg(client, replicas.get(1));
 
         requestContinue(system, "terminate system");
         system.terminate();
+        System.out.flush();
         System.out.println(">>> System terminated");
     }
 

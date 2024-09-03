@@ -535,7 +535,7 @@ public class Replica extends AbstractActor {
                 .match(ElectionMsg.class, this.electionBehaviour::onElectionMsg)
                 .match(SynchronizationMsg.class, this.electionBehaviour::onSynchronizationMsg)
                 .match(ElectionAckMsg.class, this.electionBehaviour::onElectionAckMsg)
-                .match(ElectionAckReceivedMsg.class, this.electionBehaviour::onElectionAckTimeoutReceivedMsg)
+                .match(ElectionAckReceivedMsg.class, this.electionBehaviour::onElectionAckReceivedMsg)
                 .build();
     }
 
