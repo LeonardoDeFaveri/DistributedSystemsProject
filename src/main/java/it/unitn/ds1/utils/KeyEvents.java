@@ -25,7 +25,7 @@ public enum KeyEvents {
      */
     WRITE_ACK_ALL,
     /**
-     * Receipt of a WriteOk.
+     * Receipt of a WriteOk for a normal replica.
      */
     WRITE_OK,
     /** 
@@ -34,7 +34,7 @@ public enum KeyEvents {
      */
     ELECTION_1,
     /** 
-     * Receipt of an election message for the second time.
+     * Receipt of a second-round election message.
      */
     ELECTION_2,
     /**
