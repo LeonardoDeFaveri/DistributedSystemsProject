@@ -9,7 +9,6 @@ import it.unitn.ds1.models.controlled.ReadForcedMsg;
 import it.unitn.ds1.models.controlled.UpdateRequestForcedMsg;
 import it.unitn.ds1.models.update.WriteMsg;
 import it.unitn.ds1.models.update.WriteOkMsg;
-import it.unitn.ds1.utils.KeyEvents;
 import it.unitn.ds1.utils.ProgrammedCrash;
 import it.unitn.ds1.utils.UpdateRequestId;
 import it.unitn.ds1.utils.WriteId;

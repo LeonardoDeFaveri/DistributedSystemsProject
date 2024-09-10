@@ -32,10 +32,9 @@ public class Broadcaster {
             switch (i) {
                 case 0:
                     // Sends OKs and crashes
-                    schedule.program(KeyEvents.WRITE_ACK_ALL, true, 1);
                     break;
                 case 1:
-                    schedule.program(KeyEvents.ELECTION_1, true, 1);
+                    schedule.program(KeyEvents.READ, false, 1);
                     break;
                 case 2:
                     break;
@@ -62,8 +61,21 @@ public class Broadcaster {
             replica.tell(new JoinGroupMsg(replicas), ActorRef.noSender());
             replica.tell(new StartMsg(), ActorRef.noSender());
         }
+        var client = system.actorOf(Client.controlledProps(replicas), "client");
         
-        controlledFunctioning(system, replicas);
+        // Makes coordinator crash before it can send out a WriteOk
+        sendUpdateRequest(client, replicas.get(1));
+        //Thread.sleep(1000);
+        //sendReadMsg(client, replicas.get(0));
+
+        Thread.sleep(5000);
+        sendReadMsg(client, replicas.get(1));
+        sendReadMsg(client, replicas.get(1));
+
+        requestContinue(system, "terminate system");
+        system.terminate();
+        System.out.flush();
+        System.out.println(">>> System terminated");
     }
 
     private static void normalFunctioning(ActorSystem system, ArrayList<ActorRef> replicas) {
@@ -102,28 +114,6 @@ public class Broadcaster {
 
         requestContinue(system, "terminate system");
         system.terminate();
-        System.out.println(">>> System terminated");
-    }
-
-    private static void controlledFunctioning(ActorSystem system, ArrayList<ActorRef> replicas) throws InterruptedException {
-        var client = system.actorOf(Client.controlledProps(replicas), "client");
-
-        // Makes coordinator crash before receiving any request
-        //makeReplicaCrash(crashManager, replicas.get(0));
-        //Thread.sleep(500);
-        //sendUpdateRequest(client, replicas.get(1));
-
-        // Makes coordinator crash before it can send out a WriteOk
-        sendUpdateRequest(client, replicas.get(1));
-        //Thread.sleep(1000);
-        //sendReadMsg(client, replicas.get(0));
-
-        Thread.sleep(5000);
-        sendReadMsg(client, replicas.get(1));
-
-        requestContinue(system, "terminate system");
-        system.terminate();
-        System.out.flush();
         System.out.println(">>> System terminated");
     }
 
