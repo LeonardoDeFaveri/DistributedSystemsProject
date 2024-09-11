@@ -28,9 +28,13 @@ public enum KeyEvents {
      * Receipt of a WriteOk for a normal replica.
      */
     WRITE_OK,
+    /**
+     * Sending of a new election message which initiates a new election.
+     */
+    ELECTION_0,
     /** 
      * Receipt of an election message for the first time, starting the election
-     * protocol.
+     * protocol
      */
     ELECTION_1,
     /** 

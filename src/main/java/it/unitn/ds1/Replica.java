@@ -369,6 +369,17 @@ public class Replica extends AbstractActor {
     public void beginElection() {
         getContext().become(createElection());
         this.electionBehaviour.setElectionUnderway(true);
+
+        long delay = (Delays.ELECTION_ACK_TIMEOUT + Delays.MAX_DELAY) * (this.replicas.size() - this.crashedReplicas.size());
+        // Setting a global timeout for the election, so that if it gets stuck
+        // eventually it will reset and start again
+        getContext().system().scheduler().scheduleOnce(
+                Duration.create(delay, TimeUnit.MILLISECONDS),
+                getSelf(),
+                new StuckedElectionMsg(),
+                getContext().system().dispatcher(),
+                getSelf()
+        );
     }
 
     /**
@@ -465,7 +476,7 @@ public class Replica extends AbstractActor {
         );
 
         // Initiate election protocol
-        KeyEvents event = KeyEvents.ELECTION_1;
+        KeyEvents event = KeyEvents.ELECTION_0;
         this.schedule.register(event);
 
         if (this.schedule.crashBefore(event)) {
@@ -536,6 +547,7 @@ public class Replica extends AbstractActor {
                 .match(SynchronizationMsg.class, this.electionBehaviour::onSynchronizationMsg)
                 .match(ElectionAckMsg.class, this.electionBehaviour::onElectionAckMsg)
                 .match(ElectionAckReceivedMsg.class, this.electionBehaviour::onElectionAckReceivedMsg)
+                .match(StuckedElectionMsg.class, this.electionBehaviour::onStuckedElectionMsg)
                 .build();
     }
 

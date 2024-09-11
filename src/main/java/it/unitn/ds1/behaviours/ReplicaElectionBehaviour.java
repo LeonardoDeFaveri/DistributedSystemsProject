@@ -312,6 +312,21 @@ public class ReplicaElectionBehaviour {
         );
     }
 
+    /**
+     * If this message is received while the election protocol is active, it
+     * means that somewhere the election got stuck, so it must be restarted
+     * again.
+     */
+    public void onStuckedElectionMsg(StuckedElectionMsg msg) {
+        this.thisReplica.beginElection();
+        this.sendElectionMessage();
+
+        System.out.printf(
+            "[R%d] Detected stucked election, initiating a new one%n",
+            thisReplica.getReplicaID()
+        );
+    }
+
     //=== AUXILIARIES ==========================================================
     public void setElectionUnderway(boolean b) {
         this.isElectionUnderway = b;

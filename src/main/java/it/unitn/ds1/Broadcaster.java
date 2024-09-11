@@ -31,14 +31,15 @@ public class Broadcaster {
             // Program crashes for each replica
             switch (i) {
                 case 0:
-                    // Sends OKs and crashes
+                    schedule.program(KeyEvents.WRITE_ACK_ALL, false, 1);
                     break;
                 case 1:
-                    schedule.program(KeyEvents.READ, false, 1);
                     break;
                 case 2:
+                    schedule.program(KeyEvents.ELECTION_1, false, 1);
                     break;
                 case 3:
+                    schedule.program(KeyEvents.WRITE_OK, true, 1);
                     break;
                 case 4:
                     break;
@@ -63,10 +64,7 @@ public class Broadcaster {
         }
         var client = system.actorOf(Client.controlledProps(replicas), "client");
         
-        // Makes coordinator crash before it can send out a WriteOk
         sendUpdateRequest(client, replicas.get(1));
-        //Thread.sleep(1000);
-        //sendReadMsg(client, replicas.get(0));
 
         Thread.sleep(5000);
         sendReadMsg(client, replicas.get(1));
