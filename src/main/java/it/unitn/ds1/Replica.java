@@ -376,7 +376,7 @@ public class Replica extends AbstractActor {
         getContext().system().scheduler().scheduleOnce(
                 Duration.create(delay, TimeUnit.MILLISECONDS),
                 getSelf(),
-                new StuckedElectionMsg(),
+                new StuckedElectionMsg(this.epoch),
                 getContext().system().dispatcher(),
                 getSelf()
         );
@@ -547,7 +547,7 @@ public class Replica extends AbstractActor {
                 .match(SynchronizationMsg.class, this.electionBehaviour::onSynchronizationMsg)
                 .match(ElectionAckMsg.class, this.electionBehaviour::onElectionAckMsg)
                 .match(ElectionAckReceivedMsg.class, this.electionBehaviour::onElectionAckReceivedMsg)
-                .match(StuckedElectionMsg.class, this.electionBehaviour::onStuckedElectionMsg)
+                //.match(StuckedElectionMsg.class, this.electionBehaviour::onStuckedElectionMsg)
                 .build();
     }
 

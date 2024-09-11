@@ -318,6 +318,11 @@ public class ReplicaElectionBehaviour {
      * again.
      */
     public void onStuckedElectionMsg(StuckedElectionMsg msg) {
+        if (msg.epoch != thisReplica.getEpoch()) {
+            // The election protocol is active, but for a different election.
+            // The one being checked here must have completed
+            return;
+        }
         this.thisReplica.beginElection();
         this.sendElectionMessage();
 

@@ -16,7 +16,7 @@ import java.util.ArrayList;
 
 public class Broadcaster {
     final static int N_CLIENTS = 1;
-    final static int N_REPLICAS = 4;
+    final static int N_REPLICAS = 7;
 
     public static void main(String[] args) throws InterruptedException {
         final ActorSystem system = ActorSystem.create("project");
@@ -34,6 +34,7 @@ public class Broadcaster {
                     schedule.program(KeyEvents.WRITE_ACK_ALL, false, 1);
                     break;
                 case 1:
+                    
                     break;
                 case 2:
                     schedule.program(KeyEvents.ELECTION_1, false, 1);
