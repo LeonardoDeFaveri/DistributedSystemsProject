@@ -36,7 +36,7 @@ public class ReplicaElectionBehaviour {
      */
     private final Set<Map.Entry<ActorRef, ElectionId>> pendingElectionAcks = new HashSet<>();
     /**
-     * Tells whether an election is currenty underway.
+     * Tells whether an election is currently underway.
      */
     private boolean isElectionUnderway = false;
 
@@ -62,7 +62,6 @@ public class ReplicaElectionBehaviour {
 
         if (this.thisReplica.schedule.crashAfter(event)) {
             this.thisReplica.crash(event, false);
-            return;
         }
     }
 
@@ -146,6 +145,12 @@ public class ReplicaElectionBehaviour {
     private ElectionMsg processNewCoordinator(ElectionMsg msg) {
         var mostUpdated = msg.participants
                 .entrySet().stream().reduce(Utils::getNewCoordinatorIndex);
+
+        // Couldn't find a new coordinator (this is impossible)
+        if (mostUpdated.isEmpty()) {
+            return null;
+        }
+
         thisReplica.setCoordinatorIndex(mostUpdated.get().getKey());
         thisReplica.setIsCoordinator(
                 thisReplica.getCoordinatorIndex() == thisReplica.getReplicaID()
@@ -232,7 +237,6 @@ public class ReplicaElectionBehaviour {
 
         if (this.thisReplica.schedule.crashAfter(event)) {
             this.thisReplica.crash(event, false);
-            return;
         }
     }
 
@@ -255,7 +259,6 @@ public class ReplicaElectionBehaviour {
 
         if (this.thisReplica.schedule.crashAfter(event)) {
             this.thisReplica.crash(event, false);
-            return;
         }
     }
 
@@ -293,26 +296,6 @@ public class ReplicaElectionBehaviour {
             this.thisReplica.getReplicaID(),
             this.thisReplica.getSender().path().name(),
             nextNode.path().name()
-        );
-    }
-
-    /**
-     * If this message is received while the election protocol is active, it
-     * means that somewhere the election got stuck, so it must be restarted
-     * again.
-     */
-    public void onStuckedElectionMsg(StuckedElectionMsg msg) {
-        if (msg.epoch != thisReplica.getEpoch()) {
-            // The election protocol is active, but for a different election.
-            // The one being checked here must have completed
-            return;
-        }
-        this.thisReplica.beginElection();
-        this.sendElectionMessage();
-
-        System.out.printf(
-            "[R%d] Detected stucked election, initiating a new one%n",
-            thisReplica.getReplicaID()
         );
     }
 
