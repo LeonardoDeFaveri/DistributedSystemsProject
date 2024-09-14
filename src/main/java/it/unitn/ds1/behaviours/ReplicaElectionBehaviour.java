@@ -6,6 +6,7 @@ import it.unitn.ds1.models.UpdateRequestMsg;
 import it.unitn.ds1.models.UpdateRequestOkMsg;
 import it.unitn.ds1.models.administratives.StartMsg;
 import it.unitn.ds1.models.crash_detection.ElectionAckReceivedMsg;
+import it.unitn.ds1.models.crash_detection.SynchronizationAckReceivedMsg;
 import it.unitn.ds1.models.election.*;
 import it.unitn.ds1.models.update.WriteMsg;
 import it.unitn.ds1.utils.Delays;
@@ -35,6 +36,10 @@ public class ReplicaElectionBehaviour {
      * as well, so they will figure as distinct elements in the set.
      */
     private final Set<Map.Entry<ActorRef, ElectionId>> pendingElectionAcks = new HashSet<>();
+    /**
+     * Whether the synchronization message has been received.
+     */
+    private boolean hasReceivedSynchronizationMessage = true;
     /**
      * Tells whether an election is currently underway.
      */
@@ -89,9 +94,14 @@ public class ReplicaElectionBehaviour {
             return;
         }
 
+        // Remove the crashed replicas from the participants in the election
+        for (var crashedReplica : thisReplica.getCrashedReplicas()) {
+            msg.participants.remove(thisReplica.getReplicas().indexOf(crashedReplica));
+        }
+
         // Begin the election only if current epoch is over. This message might
         // have been sent after a previous election has complete
-        if (!this.isElectionUnderway & msg.id.epoch == thisReplica.getEpoch()) {
+        if (!this.isElectionUnderway && msg.id.epoch == thisReplica.getEpoch()) {
             thisReplica.beginElection();
         }
         // Sends back the ACK
@@ -139,8 +149,6 @@ public class ReplicaElectionBehaviour {
     /**
      * When the election message has been received for the second time, we can find
      * the replica that has the requisite to become the new coordinator.
-     * @param msg the election message
-     * @return the next election message to be sent
      */
     private ElectionMsg processNewCoordinator(ElectionMsg msg) {
         var mostUpdated = msg.participants
@@ -156,33 +164,23 @@ public class ReplicaElectionBehaviour {
                 thisReplica.getCoordinatorIndex() == thisReplica.getReplicaID()
         );
 
+        this.hasReceivedSynchronizationMessage = false;
+        // I'm expecting to receive the synchronization message soon.
+        thisReplica.getContext().system().scheduler().scheduleOnce(
+                Duration.create(Delays.ELECTION_ACK_TIMEOUT, TimeUnit.MILLISECONDS),
+                thisReplica.getSelf(),
+                new SynchronizationAckReceivedMsg(),
+                thisReplica.getContext().system().dispatcher(),
+                this.thisReplica.getSelf()
+        );
+
         System.out.printf(
                 "[R%d] New coordinator found: %d%n",
                 thisReplica.getReplicaID(),
                 thisReplica.getCoordinatorIndex()
         );
         if (thisReplica.isCoordinator()) {
-            KeyEvents event = KeyEvents.BECOME_COORDINATOR;
-            this.thisReplica.schedule.register(event);
-
-            if (this.thisReplica.schedule.crashBefore(event)) {
-                this.thisReplica.crash(event, true);
-                return null;
-            }
-
-            // This replica is the new coordinator
-            thisReplica.getContext().become(thisReplica.createCoordinator());
-            // The new coordinator should start sending heartbeat messages, so
-            // it sends itself a start message so that the appropriate timer is
-            // set
-            thisReplica.getSelf().tell(new StartMsg(), thisReplica.getSelf());
-            this.processNewCoordinator(msg.participants);
-            thisReplica.onCoordinatorChange(thisReplica.getEpoch() + 1);
-
-            if (this.thisReplica.schedule.crashAfter(event)) {
-                this.thisReplica.crash(event, false);
-                this.thisReplica.crash(event, false);
-            }
+            this.becomeCoordinator(msg);
             return null;
         }
 
@@ -192,6 +190,34 @@ public class ReplicaElectionBehaviour {
         ElectionMsg nextMsg = new ElectionMsg(msg);
         System.out.printf("[R%d] Election passed on second round%n", thisReplica.getReplicaID());
         return nextMsg;
+    }
+
+    /**
+     * This replica has been elected as the new coordinator. It must send the
+     * synchronization message to all other replicas.
+     */
+    private void becomeCoordinator(ElectionMsg msg) {
+        KeyEvents event = KeyEvents.BECOME_COORDINATOR;
+        this.thisReplica.schedule.register(event);
+
+        if (this.thisReplica.schedule.crashBefore(event)) {
+            this.thisReplica.crash(event, true);
+            return;
+        }
+
+        // This replica is the new coordinator
+        thisReplica.getContext().become(thisReplica.createCoordinator());
+        // The new coordinator should start sending heartbeat messages, so
+        // it sends itself a start message so that the appropriate timer is
+        // set
+        thisReplica.getSelf().tell(new StartMsg(), thisReplica.getSelf());
+        this.sendAllSynchronizationMessages(msg.participants);
+        thisReplica.onCoordinatorChange(thisReplica.getEpoch() + 1);
+
+        if (this.thisReplica.schedule.crashAfter(event)) {
+            this.thisReplica.crash(event, false);
+            this.thisReplica.crash(event, false);
+        }
     }
 
     /**
@@ -206,6 +232,8 @@ public class ReplicaElectionBehaviour {
             this.thisReplica.crash(event, true);
             return;
         }
+
+        this.hasReceivedSynchronizationMessage = true;
 
         thisReplica.setCoordinatorIndex(thisReplica.getReplicas().indexOf(thisReplica.getSender()));
         thisReplica.setIsCoordinator(false);
@@ -299,6 +327,29 @@ public class ReplicaElectionBehaviour {
         );
     }
 
+    /**
+     * When the timeout for the ACK on the synchronization message is received, if the
+     * pair is still in the map it means that the replica has not received the
+     * acknowledgement, so we add it to the crashed replicas.
+     */
+    public void onSynchronizationAckReceivedMsg(SynchronizationAckReceivedMsg msg) {
+        if (this.hasReceivedSynchronizationMessage) {
+            return;
+        }
+
+        var coordinator = thisReplica.getReplicas().get(thisReplica.getCoordinatorIndex());
+        thisReplica.getCrashedReplicas().add(coordinator);
+
+        // The election message should be sent again
+        sendElectionMessage();
+
+        System.out.printf(
+                "[R%d] Synchronization message not received from [%s], starting another election!\n",
+                this.thisReplica.getReplicaID(),
+                coordinator.path().name()
+        );
+    }
+
     //=== AUXILIARIES ==========================================================
     public void setElectionUnderway(boolean b) {
         this.isElectionUnderway = b;
@@ -333,7 +384,7 @@ public class ReplicaElectionBehaviour {
      * Send the synchronization message to all other nodes. Each messages also
      * contains the list of updates missed by the receiver.
      */
-    public void processNewCoordinator(Map<Integer, WriteId> lastWriteForReplica) {
+    public void sendAllSynchronizationMessages(Map<Integer, WriteId> lastWriteForReplica) {
         for (var entry : lastWriteForReplica.entrySet()) {
             var replica = thisReplica.getReplicas().get(entry.getKey());
             var lastUpdate = entry.getValue();
