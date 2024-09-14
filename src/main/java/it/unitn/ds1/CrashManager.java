@@ -107,8 +107,6 @@ public class CrashManager extends AbstractActor {
      * the set of known ones). If current behaviour is Controlled, this message
      * is sent to replica until it crashes. Under normal functioning, it's sent
      * just one time and that's it.
-     * 
-     * @param replica Replica to be made crash.
      */
     private void onCrashMsgForced(CrashForcedMsg msg) {
         if (this.replicas.contains(msg.replica)) {

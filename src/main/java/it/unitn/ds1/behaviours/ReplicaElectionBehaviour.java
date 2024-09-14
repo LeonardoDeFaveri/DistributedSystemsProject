@@ -385,6 +385,14 @@ public class ReplicaElectionBehaviour {
      * contains the list of updates missed by the receiver.
      */
     public void sendAllSynchronizationMessages(Map<Integer, WriteId> lastWriteForReplica) {
+        KeyEvents event = KeyEvents.SYNCHRONIZATION;
+        this.thisReplica.schedule.register(event);
+
+        if (this.thisReplica.schedule.crashBefore(event)) {
+            this.thisReplica.crash(event, true);
+            return;
+        }
+
         for (var entry : lastWriteForReplica.entrySet()) {
             var replica = thisReplica.getReplicas().get(entry.getKey());
             var lastUpdate = entry.getValue();
@@ -401,6 +409,10 @@ public class ReplicaElectionBehaviour {
                     missedUpdatesList
                 )
             );
+        }
+
+        if (this.thisReplica.schedule.crashAfter(event)) {
+            this.thisReplica.crash(event, false);
         }
     }
 
