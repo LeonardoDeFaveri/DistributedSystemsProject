@@ -416,7 +416,6 @@ public class ReplicaElectionBehaviour {
 
         if (this.thisReplica.schedule.crashAfter(event)) {
             this.thisReplica.crash(event, false);
-            this.thisReplica.crash(event, false);
         }
     }
 }
