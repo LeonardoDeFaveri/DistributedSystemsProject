@@ -28,7 +28,7 @@ public class Client extends AbstractActor {
     static final int MAX_INT = 1000;
 
     /**
-     * All replicas in the system, whether they're active or not.
+     * All the active replicas in the system.
      */
     private final ArrayList<ActorRef> replicas;
     /**
