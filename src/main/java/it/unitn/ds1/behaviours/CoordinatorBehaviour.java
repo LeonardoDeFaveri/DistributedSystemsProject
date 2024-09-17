@@ -7,6 +7,7 @@ import it.unitn.ds1.models.UpdateRequestOkMsg;
 import it.unitn.ds1.models.update.WriteAckMsg;
 import it.unitn.ds1.models.update.WriteMsg;
 import it.unitn.ds1.models.update.WriteOkMsg;
+import it.unitn.ds1.utils.KeyEvents;
 import it.unitn.ds1.utils.UpdateRequestId;
 import it.unitn.ds1.utils.WriteId;
 
@@ -45,6 +46,14 @@ public class CoordinatorBehaviour {
 
     //=== HANDLERS =============================================================
     public void onUpdateRequest(UpdateRequestMsg msg) {
+        KeyEvents event = KeyEvents.UPDATE;
+        this.thisReplica.schedule.register(event);
+
+        if (this.thisReplica.schedule.crashBefore(event)) {
+            this.thisReplica.crash(event, true);
+            return;
+        }
+
         // If the request comes from a client, register its arrival.
         // This replica will later have to send an ACK back to this client
         if (!thisReplica.getReplicas().contains(getSender())) {
@@ -63,12 +72,25 @@ public class CoordinatorBehaviour {
         // Add the new write request to the map, so that the acks can be received
         this.writeAcksMap.putIfAbsent(writeId, new HashSet<>());
         this.writeIndex++;
+
+        if (this.thisReplica.schedule.crashAfter(event)) {
+            this.thisReplica.crash(event, false);
+            return;
+        }
     }
 
     /**
      * When the coordinator receives an ack from a replica
      */
     public void onWriteAckMsg(WriteAckMsg msg) {
+        KeyEvents event = KeyEvents.WRITE_ACK;
+        this.thisReplica.schedule.register(event);
+
+        if (this.thisReplica.schedule.crashBefore(event)) {
+            this.thisReplica.crash(event, true);
+            return;
+        }
+
         // If the epoch of the write is not the current epoch, ignore the message
         if (msg.id.epoch != thisReplica.getEpoch())
             return;
@@ -86,11 +108,16 @@ public class CoordinatorBehaviour {
         sendAllAckedMessages();
 
         System.out.printf(
-                "[Co] Received ack from %s for %d in epoch %d\n",
+                "[Co] Received ack from %s for %d in epoch %d%n",
                 getSender().path().name(),
                 msg.id.index,
                 msg.id.epoch
         );
+
+        if (this.thisReplica.schedule.crashAfter(event)) {
+            this.thisReplica.crash(event, false);
+            return;
+        }
     }
 
     //=== AUXILIARIES ==========================================================
@@ -107,9 +134,22 @@ public class CoordinatorBehaviour {
             var writeId = new WriteId(thisReplica.getEpoch(), this.currentWriteToAck);
             var updateRequestId = this.writesToUpdates.get(writeId);
             if (this.writeAcksMap.containsKey(writeId) && this.writeAcksMap.get(writeId).size() >= this.quorum) {
+                KeyEvents event = KeyEvents.WRITE_ACK_ALL;
+                this.thisReplica.schedule.register(event);
+
+                if (this.thisReplica.schedule.crashBefore(event)) {
+                    this.thisReplica.crash(event, true);
+                    return;
+                }
+
                 thisReplica.multicast(new WriteOkMsg(writeId, updateRequestId));
                 this.writeAcksMap.remove(writeId);
                 this.currentWriteToAck++;
+
+                if (this.thisReplica.schedule.crashAfter(event)) {
+                    this.thisReplica.crash(event, false);
+                    return;
+                }
             } else {
                 break;
             }

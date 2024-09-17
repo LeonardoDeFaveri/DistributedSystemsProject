@@ -29,7 +29,7 @@ public class CrashManager extends AbstractActor {
         this.numberGenerator = new Random(System.nanoTime());
 
         System.out.printf(
-                "[CM] Crash manager %s created with a quorum of %d\n",
+                "[CM] Crash manager %s created with a quorum of %d%n",
                 getSelf().path().name(),
                 this.quorum
         );
@@ -78,7 +78,7 @@ public class CrashManager extends AbstractActor {
         ActorRef replica = this.getReplica();
 
         System.out.printf(
-                "[CM] CrashManager sent crash message to %s\n",
+                "[CM] CrashManager sent crash message to %s%n",
                 replica.path().name()
         );
         replica.tell(msg, getSelf());
@@ -107,8 +107,6 @@ public class CrashManager extends AbstractActor {
      * the set of known ones). If current behaviour is Controlled, this message
      * is sent to replica until it crashes. Under normal functioning, it's sent
      * just one time and that's it.
-     * 
-     * @param replica Replica to be made crash.
      */
     private void onCrashMsgForced(CrashForcedMsg msg) {
         if (this.replicas.contains(msg.replica)) {

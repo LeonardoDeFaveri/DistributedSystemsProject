@@ -28,7 +28,7 @@ public class Client extends AbstractActor {
     static final int MAX_INT = 1000;
 
     /**
-     * All replicas in the system, whether they're active or not.
+     * All the active replicas in the system.
      */
     private final ArrayList<ActorRef> replicas;
     /**
@@ -75,7 +75,7 @@ public class Client extends AbstractActor {
         this.writeMsgs = new HashMap<>();
         this.numberGenerator = new Random(System.nanoTime());
 
-        System.out.printf("[C] Client %s created\n", getSelf().path().name());
+        System.out.printf("[C] Client %s created%n", getSelf().path().name());
 
         if (controlledBehaviour) {
             getContext().become(this.createControlled());
@@ -105,7 +105,7 @@ public class Client extends AbstractActor {
      * update requests.
      */
     private void onStartMsg(@SuppressWarnings("unused") StartMsg msg) {
-        System.out.printf("[C] Client %s started\n", getSelf().path().name());
+        System.out.printf("[C] Client %s started%n", getSelf().path().name());
 
         // Create a timer that will periodically send READ messages to a replica
         // and then the client will redirect the message to randomly chosen replica
@@ -134,7 +134,7 @@ public class Client extends AbstractActor {
      * replicas.
      */
     private void onStopMsg(@SuppressWarnings("unused") StopMsg msg) {
-        System.out.printf("[C] Client %s stopped\n", getSelf().path().name());
+        System.out.printf("[C] Client %s stopped%n", getSelf().path().name());
         if (this.readTimer != null) {
             this.readTimer.cancel();
             this.readTimer = null;
@@ -181,7 +181,7 @@ public class Client extends AbstractActor {
         );
 
         System.out.printf(
-            "[C] Client %s write req to %s for %d with index %d\n",
+            "[C] Client %s write req to %s for %d with index %d%n",
             getSelf().path().name(),
             replica.path().name(),
             updateRequest.value,
@@ -196,7 +196,7 @@ public class Client extends AbstractActor {
         this.value = msg.value;
         this.readMsgs.remove(msg.id);
         System.out.printf(
-                "[C] Client %s read done %d\n",
+                "[C] Client %s read done %d%n",
                 getSelf().path().name(),
                 this.value
         );
@@ -211,7 +211,7 @@ public class Client extends AbstractActor {
             this.replicas.remove(replica);
 
             System.out.printf(
-                "[C] Client %s detected replica %s has crashed while waiting for an ACK on read\n",
+                "[C] Client %s detected replica %s has crashed while waiting for an ACK on read%n",
                 getSelf().path().name(),
                 replica.path().name()
             );
@@ -221,7 +221,7 @@ public class Client extends AbstractActor {
     private void onUpdateRequestOkMsg(UpdateRequestOkMsg msg) {
         this.writeMsgs.remove(msg.id);
         System.out.printf(
-            "[C] Client %s write done\n",
+            "[C] Client %s write done%n",
             getSelf().path().name()
         );
     }
@@ -234,7 +234,7 @@ public class Client extends AbstractActor {
             this.replicas.remove(replica);
 
             System.out.printf(
-                "[C] Client %s detected replica %s has crashed while waiting for an ACK on update for write %d\n",
+                "[C] Client %s detected replica %s has crashed while waiting for an ACK on update for write %d%n",
                 getSelf().path().name(),
                 replica.path().name(),
                 msg.index

@@ -44,7 +44,7 @@ public interface Delays {
     /**
      * Time to wait before checking for the receipt of and ElectionAckMsg.
      */
-    long ELECTION_ACK_TIMEOUT = 1000;
+    long ELECTION_ACK_TIMEOUT = 500;
     /**
      * Time to wait before checking for the receipt of a CoordinatorAckMsg.
      */

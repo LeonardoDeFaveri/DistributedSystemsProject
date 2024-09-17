@@ -2,10 +2,12 @@ package it.unitn.ds1.models.election;
 
 import java.io.Serializable;
 
-public class ElectionAckMsg implements Serializable {
-    public final int index;
+import it.unitn.ds1.utils.ElectionId;
 
-    public ElectionAckMsg(int index) {
-        this.index = index;
+public class ElectionAckMsg implements Serializable {
+    public final ElectionId id;
+
+    public ElectionAckMsg(ElectionId id) {
+        this.id = id;
     }
 }

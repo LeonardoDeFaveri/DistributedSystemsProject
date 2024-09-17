@@ -50,7 +50,7 @@ public class MessageTimeouts {
                 getContext().system().dispatcher(),
                 getSelf()
         );
-        System.out.printf("[Co] Coordinator %s started\n", getSelf().path().name());
+        System.out.printf("[Co] Coordinator %s started%n", getSelf().path().name());
     }
 
     public void startHeartbeatReplicaTimer() {
@@ -64,7 +64,7 @@ public class MessageTimeouts {
                 getSelf()
         );
         this.resetLastContact();
-        System.out.printf("[R] Replica %s started\n", getSelf().path().name());
+        System.out.printf("[R] Replica %s started%n", getSelf().path().name());
     }
 
     /**

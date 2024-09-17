@@ -22,7 +22,7 @@ public class Logger {
 
     private static void log(String message) {
         try {
-            Files.write(Paths.get(FILE_NAME), message.getBytes(), StandardOpenOption.APPEND, StandardOpenOption.CREATE);
+            Files.write(Paths.get(FILE_NAME), message.getBytes(), StandardOpenOption.WRITE, StandardOpenOption.CREATE);
         } catch (IOException e) {
             e.printStackTrace();
         }
