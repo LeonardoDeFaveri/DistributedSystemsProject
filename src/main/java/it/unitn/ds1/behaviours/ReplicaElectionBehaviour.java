@@ -147,80 +147,6 @@ public class ReplicaElectionBehaviour {
     }
 
     /**
-     * When the election message has been received for the second time, we can find
-     * the replica that has the requisite to become the new coordinator.
-     */
-    private ElectionMsg processNewCoordinator(ElectionMsg msg) {
-        var mostUpdated = msg.participants
-                .entrySet().stream().reduce(Utils::getNewCoordinatorIndex);
-
-        // Couldn't find a new coordinator (this is impossible)
-        if (mostUpdated.isEmpty()) {
-            return null;
-        }
-
-        thisReplica.setCoordinatorIndex(mostUpdated.get().getKey());
-        thisReplica.setIsCoordinator(
-                thisReplica.getCoordinatorIndex() == thisReplica.getReplicaID()
-        );
-
-        this.hasReceivedSynchronizationMessage = false;
-        // I'm expecting to receive the synchronization message soon.
-        thisReplica.getContext().system().scheduler().scheduleOnce(
-                Duration.create(Delays.ELECTION_ACK_TIMEOUT, TimeUnit.MILLISECONDS),
-                thisReplica.getSelf(),
-                new SynchronizationAckReceivedMsg(),
-                thisReplica.getContext().system().dispatcher(),
-                this.thisReplica.getSelf()
-        );
-
-        System.out.printf(
-                "[R%d] New coordinator found: %d%n",
-                thisReplica.getReplicaID(),
-                thisReplica.getCoordinatorIndex()
-        );
-        if (thisReplica.isCoordinator()) {
-            this.becomeCoordinator(msg);
-            return null;
-        }
-
-        // If this replica has received this election message for the
-        // second time and this replica is not the new coordinator, then the
-        // election message must begin its second round.
-        ElectionMsg nextMsg = new ElectionMsg(msg);
-        System.out.printf("[R%d] Election passed on second round%n", thisReplica.getReplicaID());
-        return nextMsg;
-    }
-
-    /**
-     * This replica has been elected as the new coordinator. It must send the
-     * synchronization message to all other replicas.
-     */
-    private void becomeCoordinator(ElectionMsg msg) {
-        KeyEvents event = KeyEvents.BECOME_COORDINATOR;
-        this.thisReplica.schedule.register(event);
-
-        if (this.thisReplica.schedule.crashBefore(event)) {
-            this.thisReplica.crash(event, true);
-            return;
-        }
-
-        // This replica is the new coordinator
-        thisReplica.getContext().become(thisReplica.createCoordinator());
-        // The new coordinator should start sending heartbeat messages, so
-        // it sends itself a start message so that the appropriate timer is
-        // set
-        thisReplica.getSelf().tell(new StartMsg(), thisReplica.getSelf());
-        this.sendAllSynchronizationMessages(msg.participants);
-        thisReplica.onCoordinatorChange(thisReplica.getEpoch() + 1);
-
-        if (this.thisReplica.schedule.crashAfter(event)) {
-            this.thisReplica.crash(event, false);
-            this.thisReplica.crash(event, false);
-        }
-    }
-
-    /**
      * The new coordinator has sent the synchronization message, so replicas can
      * apply all missed updates and then enter the new epoch.
      */
@@ -418,5 +344,79 @@ public class ReplicaElectionBehaviour {
 
     public List<UpdateRequestMsg> getQueuedUpdates() {
         return queuedUpdates;
+    }
+
+    /**
+     * When the election message has been received for the second time, we can find
+     * the replica that has the requisite to become the new coordinator.
+     */
+    private ElectionMsg processNewCoordinator(ElectionMsg msg) {
+        var mostUpdated = msg.participants
+                .entrySet().stream().reduce(Utils::getNewCoordinatorIndex);
+
+        // Couldn't find a new coordinator (this is impossible)
+        if (mostUpdated.isEmpty()) {
+            return null;
+        }
+
+        thisReplica.setCoordinatorIndex(mostUpdated.get().getKey());
+        thisReplica.setIsCoordinator(
+                thisReplica.getCoordinatorIndex() == thisReplica.getReplicaID()
+        );
+
+        this.hasReceivedSynchronizationMessage = false;
+        // I'm expecting to receive the synchronization message soon.
+        thisReplica.getContext().system().scheduler().scheduleOnce(
+                Duration.create(Delays.ELECTION_ACK_TIMEOUT, TimeUnit.MILLISECONDS),
+                thisReplica.getSelf(),
+                new SynchronizationAckReceivedMsg(),
+                thisReplica.getContext().system().dispatcher(),
+                this.thisReplica.getSelf()
+        );
+
+        System.out.printf(
+                "[R%d] New coordinator found: %d%n",
+                thisReplica.getReplicaID(),
+                thisReplica.getCoordinatorIndex()
+        );
+        if (thisReplica.isCoordinator()) {
+            this.becomeCoordinator(msg);
+            return null;
+        }
+
+        // If this replica has received this election message for the
+        // second time and this replica is not the new coordinator, then the
+        // election message must begin its second round.
+        ElectionMsg nextMsg = new ElectionMsg(msg);
+        System.out.printf("[R%d] Election passed on second round%n", thisReplica.getReplicaID());
+        return nextMsg;
+    }
+
+    /**
+     * This replica has been elected as the new coordinator. It must send the
+     * synchronization message to all other replicas.
+     */
+    private void becomeCoordinator(ElectionMsg msg) {
+        KeyEvents event = KeyEvents.BECOME_COORDINATOR;
+        this.thisReplica.schedule.register(event);
+
+        if (this.thisReplica.schedule.crashBefore(event)) {
+            this.thisReplica.crash(event, true);
+            return;
+        }
+
+        // This replica is the new coordinator
+        thisReplica.getContext().become(thisReplica.createCoordinator());
+        // The new coordinator should start sending heartbeat messages, so
+        // it sends itself a start message so that the appropriate timer is
+        // set
+        thisReplica.getSelf().tell(new StartMsg(), thisReplica.getSelf());
+        this.sendAllSynchronizationMessages(msg.participants);
+        thisReplica.onCoordinatorChange(thisReplica.getEpoch() + 1);
+
+        if (this.thisReplica.schedule.crashAfter(event)) {
+            this.thisReplica.crash(event, false);
+            this.thisReplica.crash(event, false);
+        }
     }
 }
