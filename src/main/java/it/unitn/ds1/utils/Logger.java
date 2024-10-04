@@ -8,6 +8,14 @@ import java.nio.file.StandardOpenOption;
 public class Logger {
     private static final String FILE_NAME = "log.txt";
 
+    static {
+        try {
+            Files.deleteIfExists(Paths.get(FILE_NAME));
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
     public static void logUpdate(int replicaID, int epoch, int writeIndex, int value) {
         log(String.format("Replica %s update %d:%d %d%n", replicaID, epoch, writeIndex, value));
     }
@@ -22,7 +30,7 @@ public class Logger {
 
     private static void log(String message) {
         try {
-            Files.write(Paths.get(FILE_NAME), message.getBytes(), StandardOpenOption.WRITE, StandardOpenOption.CREATE);
+            Files.write(Paths.get(FILE_NAME), message.getBytes(), StandardOpenOption.APPEND, StandardOpenOption.CREATE);
         } catch (IOException e) {
             e.printStackTrace();
         }
