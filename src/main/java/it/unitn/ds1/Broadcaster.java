@@ -29,22 +29,22 @@ public class Broadcaster {
             ProgrammedCrash schedule = new ProgrammedCrash();
 
             // Program crashes for each replica
-            switch (i) {
-                case 0:
-                    schedule.program(KeyEvents.WRITE_ACK_ALL, false, 1);
-                    break;
-                case 1:
-                    
-                    break;
-                case 2:
-                    schedule.program(KeyEvents.ELECTION_1, false, 1);
-                    break;
-                case 3:
-                    schedule.program(KeyEvents.WRITE_OK, true, 1);
-                    break;
-                case 4:
-                    break;
-            }
+//            switch (i) {
+//                case 0:
+//                    schedule.program(KeyEvents.WRITE_ACK_ALL, false, 1);
+//                    break;
+//                case 1:
+//
+//                    break;
+//                case 2:
+//                    schedule.program(KeyEvents.ELECTION_1, false, 1);
+//                    break;
+//                case 3:
+//                    schedule.program(KeyEvents.WRITE_OK, true, 1);
+//                    break;
+//                case 4:
+//                    break;
+//            }
 
             replicas.add(system.actorOf(
                 Replica.props(
@@ -64,12 +64,14 @@ public class Broadcaster {
             replica.tell(new StartMsg(), ActorRef.noSender());
         }
         var client = system.actorOf(Client.controlledProps(replicas), "client");
-        
-        sendUpdateRequest(client, replicas.get(1));
 
-        Thread.sleep(5000);
-        sendReadMsg(client, replicas.get(1));
-        sendReadMsg(client, replicas.get(1));
+        normalFunctioning(system, replicas);
+
+//        sendUpdateRequest(client, replicas.get(1));
+//
+//        Thread.sleep(5000);
+//        sendReadMsg(client, replicas.get(1));
+//        sendReadMsg(client, replicas.get(1));
 
         requestContinue(system, "terminate system");
         system.terminate();
